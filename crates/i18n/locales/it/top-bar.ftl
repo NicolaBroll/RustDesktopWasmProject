@@ -41,3 +41,4 @@ top-bar-recent-forget = Rimuovi mancanti
 top-bar-recent-forget-hint = Toglie dall'elenco dei recenti i repository la cui cartella non esiste più (le cartelle non vengono toccate)
 top-bar-last-fetch = Ultimo fetch: { $when }
 top-bar-last-fetch-none = Nessun fetch da quando il repository è stato aperto
+top-bar-more-hint = I pulsanti che non stanno nella barra

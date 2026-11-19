@@ -6,7 +6,7 @@
 //! like the one of `branch.checkout`; the commits a checkout leaves behind on a detached HEAD are saved
 //! by the engine and named in the notice.
 
-use crate::branch::{Action, BranchBox, Dialog, NameKind, Op, Outcome};
+use crate::branch::{Action, BranchBox, Checkout, Dialog, NameKind, Op, Outcome};
 use crate::{Request, Tab, params, warnings_text};
 use project_domain::{Head, Oid};
 use project_engine::{CommitCheckoutParams, CommitCheckoutResult, HeadState, Message, MessageArg};
@@ -65,10 +65,14 @@ impl BranchBox {
         if self.busy() {
             return None;
         }
-        self.checkout = Some(commit_label(id));
-        Some(params(CommitCheckoutParams {
+        let params = params(CommitCheckoutParams {
             rev: id.to_string(),
-        }))
+        });
+        self.checkout = Some(Checkout {
+            name: commit_label(id),
+            params: params.clone(),
+        });
+        Some(params)
     }
 
     /// Opens the new-branch dialog at the detached HEAD, shown at `id`: the branch is created

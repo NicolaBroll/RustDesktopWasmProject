@@ -14,6 +14,7 @@ use crate::discard::{History, Phase};
 use crate::fetch::{self, Failure};
 use crate::running::Running;
 use crate::stage::StageLists;
+use crate::stash_retry::{Retry, Route};
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket, messages_text};
 use project_domain::{Change, Commit, Oid, RefInfo, RefKind, Status};
@@ -319,6 +320,15 @@ pub struct DeleteTagDialog {
     pub expected: Option<String>,
 }
 
+/// A checkout in progress: how it is named and what was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkout {
+    /// The short name of the branch, or `commit <id>`.
+    pub(crate) name: String,
+    /// The parameters as they were sent.
+    pub(crate) params: Value,
+}
+
 /// The refused checkout: it would overwrite local changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refusal {
@@ -333,9 +343,10 @@ pub struct Refusal {
 pub const REFUSED_FILES_SHOWN: usize = 8;
 
 impl Refusal {
-    /// The checkout of `name` (the short name of the branch, or `commit <id>`) refused for
-    /// `files`: the short text of merge and pull, with "Stash…".
-    fn new(name: &str, files: Vec<String>) -> Self {
+    /// The `checkout` (sent with the command of `op`) refused for `files`: the short text of
+    /// merge and pull, with "Stash…".
+    fn new(op: Op, checkout: Checkout, files: Vec<String>) -> Self {
+        let name = checkout.name.as_str();
         let shown = files
             .iter()
             .take(REFUSED_FILES_SHOWN)
@@ -351,10 +362,18 @@ impl Refusal {
             )),
             _ => Some(shown),
         };
-        let failure = fetch::local_changes_failure(
+        let mut failure = fetch::local_changes_failure(
             tr!("branch-refused-heading", name = name),
             text.as_deref(),
         );
+        // The checkout as it was sent: the stash dialog opened from this refusal can send it
+        // again after the stash ("Stash and …", U68).
+        failure.retry = Some(Box::new(Retry::new(
+            checkout.params.clone(),
+            tr!("branch-checkout-label", name = name),
+            tr!("stash-retry-checkout", name = name),
+            Route::Checkout(op, checkout),
+        )));
         Self { files, failure }
     }
 
@@ -387,8 +406,8 @@ pub enum Dialog {
 #[derive(Debug, Default)]
 pub struct BranchBox {
     pub(crate) dialog: Option<Dialog>,
-    /// The checkout in progress, short name of the branch or `commit <id>` (it has no dialog).
-    pub(crate) checkout: Option<String>,
+    /// The checkout in progress (it has no dialog).
+    pub(crate) checkout: Option<Checkout>,
     /// The tracking branch being created by "Check out" on a remote branch, short name (no
     /// dialog): once created it is checked out.
     pub(crate) track: Option<String>,
@@ -575,8 +594,23 @@ impl BranchBox {
             return None;
         }
         let params = params(BranchCheckoutParams { name: name.clone() });
-        self.checkout = Some(name);
+        self.checkout = Some(Checkout {
+            name,
+            params: params.clone(),
+        });
         Some(params)
+    }
+
+    /// The checkout refused for local changes is sent again after a stash ("Stash and …", U68):
+    /// waits for its answer as when it was first sent.
+    pub(crate) fn restart_checkout(&mut self, checkout: Checkout) {
+        self.refusal = None;
+        self.checkout = Some(checkout);
+    }
+
+    /// The failure dialog of the refused checkout, to note HEAD in its retry or to take it.
+    pub(crate) fn refusal_mut(&mut self) -> Option<&mut Failure> {
+        self.refusal.as_mut().map(|r| &mut r.failure)
     }
 
     /// Starts the deletion of the branch `name` (short) that the user sees on `target`: the
@@ -725,9 +759,10 @@ impl BranchBox {
         kind: Option<ErrorKind>,
         detail: Option<String>,
     ) -> Received {
-        let Some(name) = self.checkout.take() else {
+        let Some(checkout) = self.checkout.take() else {
             return unexpected(op);
         };
+        let name = checkout.name.clone();
         self.refusal = None;
         match result {
             Err(_) if kind == Some(ErrorKind::CheckoutConflict) => {
@@ -737,7 +772,7 @@ impl BranchBox {
                     .filter(|l| !l.is_empty())
                     .map(str::to_owned)
                     .collect();
-                self.refusal = Some(Refusal::new(&name, files));
+                self.refusal = Some(Refusal::new(op, checkout, files));
                 Received::Refused
             }
             Err(e) => {
@@ -1554,6 +1589,18 @@ mod tests {
         );
         assert!(matches!(r, Received::Refused));
         assert!(b.dialog().is_none(), "no branch dialog");
+        // The checkout as it was sent, for "Stash and check out" in the stash dialog.
+        let params = json!({ "name": "feature/x" });
+        let checkout = Checkout {
+            name: "feature/x".to_owned(),
+            params: params.clone(),
+        };
+        let retry = Retry::new(
+            params,
+            "Checking out “feature/x”".to_owned(),
+            "Stash and check out “feature/x”".to_owned(),
+            Route::Checkout(Op::Checkout, checkout),
+        );
         assert_eq!(
             b.refusal(),
             Some(&Failure {
@@ -1563,6 +1610,7 @@ mod tests {
                     .to_owned(),
                 git: None,
                 stash: true,
+                retry: Some(Box::new(retry)),
             })
         );
         b.dismiss_refusal();

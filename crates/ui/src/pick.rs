@@ -8,8 +8,8 @@
 //! panel with `cherry_pick.continue`/`revert.continue` and `*.abort`, like the merge.
 
 use super::{
-    Dialog, ErrorKind, Failure, Kind, MergeBox, Op, Outcome, Received, Starting, local_changes,
-    message_texts, reread_warning, unexpected,
+    Dialog, ErrorKind, Failure, Kind, MergeBox, Op, Outcome, Received, Retry, Route, Starting,
+    local_changes, message_texts, reread_warning, unexpected,
 };
 use project_domain::Oid;
 use project_engine::{PickStartParams, PickStartResult};
@@ -135,6 +135,7 @@ impl MergeBox {
             what,
             into,
             squash: false,
+            params: params.clone(),
         });
         (params, label)
     }
@@ -158,7 +159,17 @@ impl MergeBox {
         );
         match result {
             Err(_) if kind == Some(ErrorKind::LocalChanges) => {
-                local_changes(&mut self.failure, title, &what, detail.as_deref())
+                let button = match pick {
+                    Pick::CherryPick => tr!("stash-retry-cherry-pick"),
+                    Pick::Revert => tr!("stash-retry-revert"),
+                };
+                let retry = Retry::new(
+                    starting.params.clone(),
+                    what.clone(),
+                    button,
+                    Route::Merge(Op::Pick(pick), starting),
+                );
+                local_changes(&mut self.failure, title, &what, detail.as_deref(), retry)
             }
             Err(e) => {
                 // Engine refusals (already applied, detached HEAD, mainline):
@@ -184,6 +195,7 @@ impl MergeBox {
                     explanation: explanation.clone(),
                     git,
                     stash: false,
+                    retry: None,
                 });
                 Received::Failed {
                     message: explanation,

@@ -534,7 +534,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   is a mid grey (`theme::light_scroll`).
 
 ### U68 — "Stash and retry", toolbar at large scale
-- [ ] **Agent:** `egui-ui`, then `safety-reviewer`
+- [x] **Agent:** `egui-ui`, then `safety-reviewer`
 - **Goal:** after "Stash…" from a refusal for local changes the refused command (merge, pull,
   checkout) must be started again by hand: the dialog gets "Stash and retry", which runs
   `stash.push` and then the same command, and stops if the stash fails. At 150% in a 760x520
@@ -542,6 +542,20 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   "»" menu.
 - **Done when:** unit test (the retry is sent only after a successful stash, with the same
   parameters); on Xvfb at 150% every toolbar command is reachable; CI green.
+- **Done:** the failure of a merge, cherry-pick, revert, pull or checkout refused for local
+  changes carries the command as it was sent (`Failure::retry`, `crates/ui/src/stash_retry.rs`);
+  "Stash…" there opens the stash dialog with "Stash and pull / merge / check out “x”" as the
+  default button (plain "Stash" beside it). The handler of the `stash.push` answer sends the
+  command again, once and only after a successful stash, or drops it with a notice when HEAD is
+  not the one of the refusal or an operation is in progress; nothing is popped by itself, the
+  journal has two entries. A refusal that is not a `*-local-changes` key has no "Stash…" as
+  before (U32): so a fast-forward pull that git refuses as "would overwrite local changes or
+  untracked files" (`engine-pull-overwrite…`). From the safety review: Enter is a dialog's
+  default button only while the keyboard is in a text field or on nothing (`view::default_enter`,
+  used by the stash, clone, credential, open-by-path, remote and worktree dialogs): on a
+  focused "Stash", "Cancel" or checkbox it is that widget's click and nothing is retried. The
+  toolbar measures its buttons before drawing them: those without room go, from the right, into
+  a "»" menu with the same labels, shortcuts, states and counts.
 
 ### Left for later (they need new engine commands or `Platform` capabilities)
 

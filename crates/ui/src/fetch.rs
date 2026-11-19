@@ -7,6 +7,7 @@
 //! network errors are explained in a window with git's text.
 
 use crate::running::Running;
+use crate::stash_retry::Retry;
 use crate::{Done, Request, Tab, params};
 use crate::{ErrorKind, Ticket};
 use project_domain::RefInfo;
@@ -58,6 +59,9 @@ pub struct Failure {
     pub git: Option<String>,
     /// Refused for uncommitted local changes: the dialog offers "Stash…".
     pub stash: bool,
+    /// The refused command, which the stash dialog opened from here can send again after the
+    /// stash ("Stash and …", U68). It lives and dies with this failure.
+    pub retry: Option<Box<Retry>>,
 }
 
 /// The fetch: the one in progress and the last error to explain.
@@ -218,6 +222,7 @@ impl FetchBox {
                     explanation: error.clone(),
                     git: detail,
                     stash: false,
+                    retry: None,
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
@@ -267,6 +272,7 @@ pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
         ),
         git: detail,
         stash: false,
+        retry: None,
     }
 }
 
@@ -281,6 +287,7 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
         ),
         git: detail,
         stash: false,
+        retry: None,
     }
 }
 
@@ -295,6 +302,7 @@ pub fn local_changes_failure(title: String, files: Option<&str>) -> Failure {
         },
         git: None,
         stash: true,
+        retry: None,
     }
 }
 

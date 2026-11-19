@@ -88,3 +88,22 @@ stash-notice-help = Questi file sono in conflitto e git non ha operazioni in cor
 stash-notice-help-apply = { $name } è stato applicato, ma dal commit su cui era stato creato le stesse righe sono cambiate: questi file sono in conflitto (con i marcatori di git dove git li ha messi). Gli altri file dello stash sono applicati. Niente si è perso: { $name } resta nell'elenco.
 stash-notice-help-pop = { $name } è stato applicato, ma dal commit su cui era stato creato le stesse righe sono cambiate: questi file sono in conflitto (con i marcatori di git dove git li ha messi). Gli altri file dello stash sono applicati. Niente si è perso: { $name } resta nell'elenco (il pop non lo elimina).
 stash-notice-how = Per risolvere i conflitti: fai clic su un file, scegli nell'editor dei conflitti e poi «Segna come risolto» (oppure correggi il file e mettilo in stage dall'area delle modifiche). Poi, se non serve più, elimina lo stash. Finché restano conflitti né Stash né Applica sono possibili.
+# "Stash and retry" (U68): the stash dialog opened from a command refused for local changes.
+# $label: the description of that command (sync-label-…, merge-start-label, branch-checkout-label…);
+# $name: the stash just made (stash@{0}); $reason: stash-retry-dropped-….
+stash-retry-pull = Fai stash e pull
+stash-retry-merge = Fai stash e merge
+stash-retry-squash = Fai stash e squash
+stash-retry-cherry-pick = Fai stash e cherry-pick
+stash-retry-revert = Fai stash e revert
+stash-retry-checkout = Fai stash e checkout di «{ $name }»
+stash-retry-body = Il primo pulsante mette le modifiche in uno stash, poi fa ripartire il comando rifiutato ({ $label }). Non tornano da sole: si riprendono con Applica o Pop dalla sezione Stash.
+stash-retry-help = Mette da parte le modifiche e, solo se lo stash riesce, rimanda il comando rifiutato così com'era. Lo stash resta nell'elenco
+stash-retry-plain-help = Mette solo da parte le modifiche: il comando rifiutato non viene rimandato
+stash-retry-dropped = Modifiche messe da parte in { $name }. Non ripartito: { $label } ({ $reason }); fallo ripartire tu
+stash-retry-dropped-head = il branch attivo o il suo commit non è più quello su cui era stato rifiutato
+stash-retry-dropped-operation = c'è un'operazione in corso
+stash-retry-dropped-unknown = non è stato possibile controllare lo stato del repository
+stash-retry-dropped-busy = c'è un'altra operazione o un dialogo aperto
+stash-retry-done = Modifiche messe da parte in { $name }. { $notice }
+stash-retry-kept = Non completato: { $label }. Le modifiche restano in { $name }: si riprendono con Applica o Pop dalla sezione Stash.

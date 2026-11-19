@@ -44,7 +44,7 @@ pub(crate) fn credential_dialog(
                 .selectable(true),
         );
         ui.add_space(8.0);
-        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter = default_enter(ui);
         if kind == CredentialKind::HostKey {
             ui.add(egui::Label::new(tr!("credentials-host-key-explanation")).wrap());
             ui.add_space(10.0);

@@ -1798,3 +1798,171 @@ fn one_back_button_and_a_proposed_clone_folder() {
     assert!(folder.ends_with("widgets"), "{folder}");
     assert!(painted.iter().any(|p| p.text == folder), "{folder}");
 }
+
+/// U68: the stash dialog opened from a refusal for local changes offers the refused command
+/// ("Stash and …", the default button, with the plain "Stash" beside it); opened from the
+/// toolbar it is the plain dialog.
+#[test]
+fn the_stash_dialog_offers_the_refused_command_only_from_its_refusal() {
+    use crate::stash::Action as S;
+    let offers = |painted: &[Painted]| painted.iter().any(|p| p.text.starts_with("Stash and "));
+    let mut screen = sample();
+    let painted = screen.shows(A::Stash(S::Open), &["Stash changes", "Cancel"]);
+    assert!(
+        !offers(&painted),
+        "a stash from the toolbar retries nothing"
+    );
+    assert!(painted.iter().any(|p| p.text == "Stash"));
+    screen.act(A::Stash(S::CloseDialog));
+
+    // "Stash…" in the dialog of a refused checkout (the last one painted: the toolbar has one).
+    let painted = screen.shows(
+        A::Branch(crate::branch::Action::Checkout("feature/graph".into())),
+        &["Cannot check out “feature/graph”"],
+    );
+    let stash = painted.iter().rev().find(|p| p.text == "Stash…");
+    let at = stash.expect("“Stash…” in the dialog").pos + egui::vec2(4.0, 6.0);
+    screen.click(at, Primary);
+    let painted = screen.shows_frames(&[
+        "Stash changes",
+        "Stash and check out “feature/graph”",
+        "then runs the refused command again (Checking out “feature/graph”)",
+        "They are not put back by themselves",
+        "Cancel",
+    ]);
+    assert!(screen.repo().failure().is_none(), "one dialog at a time");
+    assert!(
+        painted.iter().any(|p| p.text == "Stash"),
+        "the plain stash stays"
+    );
+
+    // Enter is the default button: the stash, then the checkout that was refused.
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let painted = screen.shows_frames(&["Stashes (1)", "Changes stashed in stash@{0}. "]);
+    assert!(!offers(&painted), "the dialog is closed");
+    assert!(screen.repo().stash.dialog().is_none());
+    let head = view::current_branch(&screen.repo().head);
+    assert_eq!(head, Some("feature/graph"));
+}
+
+/// The stash dialog of a refused checkout of "feature/graph", as "Stash…" in the refusal
+/// opens it: the keyboard is in the message field.
+#[cfg(test)]
+fn stash_dialog_after_a_refused_checkout() -> Screen {
+    let mut screen = sample();
+    let painted = screen.shows(
+        A::Branch(crate::branch::Action::Checkout("feature/graph".into())),
+        &["Cannot check out “feature/graph”"],
+    );
+    let stash = painted.iter().rev().find(|p| p.text == "Stash…");
+    let at = stash.expect("“Stash…” in the dialog").pos + egui::vec2(4.0, 6.0);
+    screen.click(at, Primary);
+    screen.shows_frames(&["Stash and check out “feature/graph”", "Cancel"]);
+    screen
+}
+
+/// U68, from the safety review: Enter is the default button ("Stash and …") only while the
+/// keyboard is in the message field. On the plain "Stash" it stashes and the refused checkout
+/// is NOT sent again; on "Cancel" nothing is written at all.
+#[test]
+fn enter_on_another_button_of_the_stash_dialog_never_retries() {
+    let tab = |screen: &mut Screen, times: usize| {
+        for _ in 0..times {
+            screen.key(egui::Key::Tab, egui::Modifiers::NONE);
+        }
+    };
+    // Message, the two checkboxes, "Stash and …", then the plain "Stash".
+    let mut screen = stash_dialog_after_a_refused_checkout();
+    let before = view::current_branch(&screen.repo().head).map(str::to_owned);
+    tab(&mut screen, 4);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    screen.shows_frames(&["Stashes (1)"]);
+    assert!(screen.repo().stash.dialog().is_none(), "the stash was made");
+    let after = view::current_branch(&screen.repo().head).map(str::to_owned);
+    assert_eq!(after, before, "the plain stash checks nothing out");
+
+    // One more Tab: "Cancel".
+    let mut screen = stash_dialog_after_a_refused_checkout();
+    tab(&mut screen, 5);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let painted = screen.frames(3);
+    assert!(
+        screen.repo().stash.dialog().is_none(),
+        "the dialog is closed"
+    );
+    assert!(
+        painted.iter().any(|p| p.text == "Stashes (0)"),
+        "nothing was stashed"
+    );
+    let after = view::current_branch(&screen.repo().head).map(str::to_owned);
+    assert_eq!(after, before, "and nothing was checked out");
+
+    // A checkbox: Enter ticks it, the dialog stays.
+    let mut screen = stash_dialog_after_a_refused_checkout();
+    tab(&mut screen, 1);
+    screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    let Some(crate::stash::Dialog::Push(dialog)) = screen.repo().stash.dialog() else {
+        panic!("the dialog stays");
+    };
+    assert!(dialog.fields.include_untracked, "Enter ticked the checkbox");
+    let after = view::current_branch(&screen.repo().head).map(str::to_owned);
+    assert_eq!(after, before);
+}
+
+/// U68: a toolbar wider than its room (a narrow window, a large UI scale) draws the buttons
+/// that fit and puts the others, from the right, in the "»" menu: none is cut by the edge.
+#[test]
+fn a_toolbar_without_room_moves_its_last_buttons_into_a_menu() {
+    let buttons = ["Undo", "Redo", "Fetch", "Pull", "Push", "Stash…", "Refresh"];
+    // In the bar by its name; in the menu the count of Pull and Push follows it ("Push ↑1").
+    let drawn = |painted: &[Painted]| -> Vec<&str> {
+        let is = |name: &&&str| {
+            let counted = format!("{name} ");
+            let named = |p: &Painted| p.text == **name || p.text.starts_with(&counted);
+            painted.iter().any(named)
+        };
+        buttons.iter().filter(is).copied().collect()
+    };
+    let mut screen = sample();
+    let painted = screen.frames(2);
+    assert_eq!(drawn(&painted), buttons, "all of them when there is room");
+    assert!(!painted.iter().any(|p| p.text == "»"));
+
+    // 760x520 at 150%: about 507x347 points.
+    screen.size = egui::vec2(760.0 / 1.5, 520.0 / 1.5);
+    let painted = screen.frames(3);
+    let kept = drawn(&painted);
+    assert!(kept.len() < buttons.len(), "{kept:?}");
+    assert_eq!(kept, buttons[..kept.len()], "the first ones stay, in order");
+    assert!(kept.contains(&"Undo"), "{kept:?}");
+    let more = painted.iter().find(|p| p.text == "»").expect("the menu");
+    for p in painted
+        .iter()
+        .filter(|p| buttons.contains(&p.text.as_str()) || p.text == "»")
+    {
+        assert!(!p.cut, "{p:?}");
+        assert!(p.pos.x + p.width <= screen.size.x, "beyond the edge: {p:?}");
+    }
+
+    // The menu has the ones left out, with their shortcut; one of them works from there.
+    let at = more.pos + egui::vec2(2.0, 2.0);
+    let painted = screen.click(at, Primary);
+    let left_out = &buttons[kept.len()..];
+    assert_eq!(drawn(&painted)[kept.len()..], *left_out, "in the menu");
+    assert!(left_out.contains(&"Refresh"));
+    assert!(painted.iter().any(|p| p.text == "F5"), "the shortcut");
+    let painted = screen.click_on(&painted, "Stash…", Primary);
+    assert_shows(&painted, &["Stash changes"]);
+    assert!(drawn(&painted).len() == kept.len(), "the menu closed");
+
+    // Much narrower: hardly a button is left in the bar, and every command is still there.
+    screen.act(A::Stash(crate::stash::Action::CloseDialog));
+    screen.size = egui::vec2(170.0, 300.0);
+    let painted = screen.frames(3);
+    assert!(drawn(&painted).len() <= 1, "{:?}", drawn(&painted));
+    let more = painted.iter().find(|p| p.text == "»").expect("the menu");
+    let painted = screen.click(more.pos + egui::vec2(2.0, 2.0), Primary);
+    assert_eq!(drawn(&painted), buttons, "bar and menu together");
+    let push = painted.iter().find(|p| p.text.starts_with("Push "));
+    assert_eq!(push.map(|p| p.text.as_str()), Some("Push ↑1"), "the count");
+}

@@ -52,6 +52,7 @@ mod settings;
 mod side_panel;
 mod stage;
 mod stash;
+mod stash_retry;
 mod status;
 mod submodule;
 mod sync;
@@ -1149,7 +1150,19 @@ impl Tab {
         if let Some(generation) = moved {
             self.check_submodules(generation);
         }
+        // The answer of the command sent again after a stash ("Stash and …", U68).
+        let retried = self
+            .repo
+            .as_mut()
+            .and_then(|r| r.stash.take_retried(done.ticket));
+        let ok = done.result.is_ok();
         self.receive_request(request, done);
+        if let Some(repo) = &mut self.repo {
+            repo.note_refused_head();
+        }
+        if let Some(sent) = retried {
+            self.retry_answered(&sent, ok);
+        }
         // A new status or diff: which of its files are stored in Git LFS (S63).
         self.follow_lfs();
     }
@@ -1742,7 +1755,7 @@ impl Tab {
         }
         // Last, so above any other dialog; one failure at a time.
         if let Some((source, failure)) = repo.failure() {
-            view::failure_dialog(ctx, failure, &source.dismiss(), actions);
+            view::failure_dialog(ctx, failure, source, actions);
         }
     }
 

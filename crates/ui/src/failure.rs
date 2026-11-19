@@ -1,6 +1,8 @@
 //! The failure dialog (U62): an operation that failed or was refused for a reason to explain
 //! (fetch, remote, pull and push, merge, checkout) shows a modal dialog with what happened,
-//! what to do and git's text. Data only, no egui: tested with unit tests.
+//! what to do and git's text. Data only, no egui: tested with unit tests. A refusal for local
+//! changes offers "Stash…", which hands the refused command to the stash dialog
+//! ([`crate::stash_retry`]).
 //!
 //! Each area keeps its own [`Failure`]; here they become one dialog at a time. With two
 //! failures waiting, the one that came first stays on screen until it is dismissed, then the

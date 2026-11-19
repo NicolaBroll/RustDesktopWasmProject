@@ -1,16 +1,19 @@
 use super::*;
+use crate::failure::Source;
 use crate::{fetch, stash, sync};
 
 /// The dialog of a failed or refused operation: what happened, what to do, git's text (with
 /// "Copy message") and "Stash…" for a refusal because of local changes. Modal like the
 /// confirmations: Esc closes it, the keyboard starts on "Stash…" or "Close" (Enter presses
-/// it); `dismiss` closes it.
+/// it). `source`: the area the failure comes from, which closes it; "Stash…" hands that area's
+/// refused command to the stash dialog ("Stash and …", U68).
 pub(crate) fn failure_dialog(
     ctx: &egui::Context,
     failure: &Failure,
-    dismiss: &Action,
+    source: Source,
     actions: &mut Vec<Action>,
 ) {
+    let dismiss = source.dismiss();
     let modal = egui::Modal::new(egui::Id::unique("failure")).show(ctx, |ui| {
         ui.set_max_width(460.0);
         ui.heading(&failure.title);
@@ -30,8 +33,7 @@ pub(crate) fn failure_dialog(
                 stash.as_ref().unwrap_or(&close).request_focus();
             }
             if stash.is_some_and(|s| s.clicked()) {
-                actions.push(dismiss.clone());
-                actions.push(Action::Stash(stash::Action::Open));
+                actions.push(Action::Stash(stash::Action::OpenAfter(source)));
             }
             if close.clicked() {
                 actions.push(dismiss.clone());
@@ -52,7 +54,7 @@ pub(crate) fn failure_dialog(
         });
     });
     if modal.should_close() {
-        actions.push(dismiss.clone());
+        actions.push(dismiss);
     }
 }
 

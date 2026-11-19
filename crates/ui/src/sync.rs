@@ -27,6 +27,7 @@ use crate::ErrorKind;
 use crate::discard::History;
 use crate::fetch::{self, Failure};
 use crate::running::Running;
+use crate::stash_retry::{Retry, Route};
 use crate::{Done, Tab, params};
 use project_domain::remote_short;
 use project_domain::{HEADS_PREFIX, Head, Oid, RefInfo, Status};
@@ -344,6 +345,14 @@ impl SyncBox {
         self.window = None;
     }
 
+    /// The failure dialog, to note HEAD in its retry or to take it ("Stash and …", U68).
+    pub(crate) fn failure_mut(&mut self) -> Option<&mut Failure> {
+        match &mut self.window {
+            Some(Window::Failure(failure)) => Some(failure),
+            _ => None,
+        }
+    }
+
     /// The rejected push to show as a notice in the tab, if any.
     pub fn rejected(&self) -> Option<&Rejected> {
         self.rejected.as_ref().map(|notice| &notice.rejected)
@@ -578,10 +587,20 @@ impl SyncBox {
             }
             // Uncommitted changes: the UI's text with "Stash…"; the fetch may be done, re-read.
             Some(ErrorKind::LocalChanges) => {
-                let failure = fetch::local_changes_failure(
+                let mut failure = fetch::local_changes_failure(
                     tr!("sync-not-possible-title", label = &label),
                     detail.as_deref(),
                 );
+                // Only a pull is refused this way, and only a pull is ever sent again after a
+                // stash: with the parameters of this request, as they were sent.
+                if request.op == Op::Pull {
+                    failure.retry = Some(Box::new(Retry::new(
+                        request.params(),
+                        label.clone(),
+                        tr!("stash-retry-pull"),
+                        Route::Pull(request.clone()),
+                    )));
+                }
                 let message = tr!(
                     "sync-not-possible",
                     label = &label,
@@ -602,6 +621,7 @@ impl SyncBox {
                     explanation: error.clone(),
                     git: None,
                     stash: false,
+                    retry: None,
                 }));
                 Received::Failed {
                     message: tr!("sync-not-possible", label = &label, error = error),
@@ -614,6 +634,7 @@ impl SyncBox {
                     explanation: error.clone(),
                     git: detail,
                     stash: false,
+                    retry: None,
                 }));
                 Received::Failed {
                     message: tr!("common-failed", label = &label, error = error),

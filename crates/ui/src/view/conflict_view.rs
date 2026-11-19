@@ -350,11 +350,7 @@ fn footer_row(
             }
         }
         if loaded.can_delete() {
-            let color = if enabled {
-                ui.visuals().error_fg_color
-            } else {
-                ui.visuals().weak_text_color()
-            };
+            let color = crate::theme::destructive(ui.visuals(), enabled);
             let button = ui
                 .add_enabled(
                     enabled,

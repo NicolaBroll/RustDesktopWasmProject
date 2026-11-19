@@ -451,7 +451,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   Ctrl+Enter; Help lists the list keys too.
 
 ### U65 — Dark theme contrast
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** in the dark theme (egui's defaults) weak text — commit ids, author, date, hints,
   placeholders, the repo path — is 2.7:1 against the panel and disabled text 2.3:1; U51 fixed
   only the light theme, where links (2.8:1) and the counters of the tree (2.8:1) are still
@@ -459,6 +459,18 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   links and counters at least 4.5:1.
 - **Done when:** theme tests for the dark theme like the light one's; screenshots of both
   themes; CI green.
+- **Done:** `theme::dark` beside `theme::light`, both installed by `install_text_styles`. Dark:
+  text grey 190 (9.3:1 on the panel, was 5.1), weak alpha 0.72 (5.4:1, was 2.7; placeholders
+  5.9:1), disabled alpha 0.55 (3.7:1, was 2.3), red `#ff8a80` (4.5:1 also on a menu entry under
+  the mouse, was 2.6), white text on the selection (7.4:1, weak 4.9:1, were 5.3 and 3.7). Light:
+  text grey 60 like the buttons' (10.4:1), weak alpha 0.76 (5.2:1, was 3.8), links `#005fcc`
+  (5.6:1, was 2.8), orange `#9a4400` and red `#b4141e` (were 2.8 and 3.8), navy text on the
+  selection (9.2:1, weak 5.0:1), lane colors as text 4.5:1. Through the theme: `merge` (a
+  purple per theme), `on_selection`, `counter` (the tree's counters and ahead/behind: text
+  color on light, where a thin "1" gets four fifths of its color: 5.7:1, was 2.8),
+  `destructive` (a disabled red button was weak text faded again). Left under 4.5:1: weak text
+  on a row under the mouse (3.7:1 dark, 4.4:1 light), and weak text inside a disabled area
+  (2.5:1); both themes are checked by `text_levels_read` in `theme.rs`.
 
 ### U66 — Layout bugs and wording
 - [ ] **Agent:** `egui-ui`

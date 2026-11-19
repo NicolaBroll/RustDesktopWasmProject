@@ -509,7 +509,11 @@ fn folder_row(ui: &mut Ui, depth: usize, path: &str, name: &str, count: usize, o
     caret(ui, open);
     ui.label(icons::text(icons::FOLDER, 13.0).weak());
     ui.add(egui::Label::new(name).truncate().selectable(false));
-    ui.label(RichText::new(count.to_string()).small().weak());
+    ui.label(
+        RichText::new(count.to_string())
+            .small()
+            .color(theme::counter(ui.visuals())),
+    );
     response.clicked()
 }
 
@@ -627,11 +631,7 @@ impl RefMenu<'_> {
         }
         if let Some((remote, branch)) = on_remote {
             ui.separator();
-            let color = if can_write {
-                ui.visuals().error_fg_color
-            } else {
-                ui.visuals().weak_text_color()
-            };
+            let color = theme::destructive(ui.visuals(), can_write);
             let button = ui
                 .add_enabled(
                     can_write,
@@ -727,11 +727,7 @@ fn local_branch_items(
     upstream_items(ui, info, can_write, actions);
     ui.separator();
     let enabled = can_write && !is_head;
-    let color = if enabled {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), enabled);
     let button = ui
         .add_enabled(
             enabled,
@@ -812,11 +808,7 @@ fn tag_items(
         }
     }
     ui.separator();
-    let color = if can_write {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), can_write);
     let button = ui
         .add_enabled(
             can_write,

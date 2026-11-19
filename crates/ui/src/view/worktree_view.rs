@@ -166,11 +166,7 @@ fn worktree_menu(ui: &mut Ui, info: &WorktreeInfo, can_write: bool, actions: &mu
     }
     ui.separator();
     let blocked = worktree::remove_blocked(info).or_else(|| (!can_write).then(wait));
-    let color = if blocked.is_none() {
-        ui.visuals().error_fg_color
-    } else {
-        ui.visuals().weak_text_color()
-    };
+    let color = theme::destructive(ui.visuals(), blocked.is_none());
     if ui
         .add_enabled(
             blocked.is_none(),

@@ -186,9 +186,10 @@ fn row_styles(ui: &Ui, dates: DateFormat) -> (RowStyle, RowStyle) {
         },
     };
     // On the selected row the text takes the selection's color: gray on blue is hard to read.
+    let (text, weak) = theme::on_selection(ui.visuals());
     let on_selection = RowStyle {
-        text: ui.visuals().selection.stroke.color,
-        weak: ui.visuals().selection.stroke.color.gamma_multiply(0.75),
+        text,
+        weak,
         ..style.clone()
     };
     (style, on_selection)

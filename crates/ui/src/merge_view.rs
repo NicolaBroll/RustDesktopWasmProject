@@ -111,11 +111,7 @@ fn buttons(
     }
     if let Some(kind) = abort {
         let name = kind.name();
-        let color = if can_write {
-            ui.visuals().error_fg_color
-        } else {
-            ui.visuals().weak_text_color()
-        };
+        let color = crate::theme::destructive(ui.visuals(), can_write);
         let button = ui
             .add_enabled(
                 can_write,

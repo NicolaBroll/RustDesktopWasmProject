@@ -85,14 +85,10 @@ stash-drop-what-happens = What happens:
 stash-drop-undo = With “Undo” in the top bar the stash comes back at the top of the list (stash@{"{"}0{"}"}), as long as the app stays open: the operation log is in memory. After closing, the backup of its commit remains in refs/project/backup/stash-….
 stash-drop-confirm = Drop the stash
 stash-drop-keep = Don't drop
-stash-conflicts-title-pop = Pop of { $name }: conflicts
-stash-conflicts-title-apply = Apply of { $name }: conflicts
-stash-conflicts-body-apply = The stash was applied, but since the commit it was created on the same files have changed: the ones below are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: those files had no local changes and { $name } stays in the list.
-stash-conflicts-body-pop = The stash was applied, but since the commit it was created on the same files have changed: the ones below are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: those files had no local changes and { $name } stays in the list (the pop doesn't drop it).
-stash-conflicts-how = To resolve them: fix each file and stage it from the changes area. Then, if it's no longer needed, drop the stash. While conflicts remain, neither Stash nor Apply is possible.
-stash-conflicts-files = { $n ->
-    [one] Conflicted file:
-   *[other] { $n } conflicted files:
-}
-stash-go-to-changes = Go to changes
-stash-go-to-changes-help = Opens the staging area with the conflicted files
+# The notice in the tab: conflicted files and no operation in progress (U63).
+stash-notice-title = Conflicts from a stash
+stash-notice-title-applied = Conflicts from { $name }, which stays in the list
+stash-notice-help = These files are conflicted and git has no operation in progress: that is what a stash applied with conflicts leaves (also one applied before the app was started, or from the terminal). The stash's other files are applied and the stash is still in the list: nothing is lost.
+stash-notice-help-apply = { $name } was applied, but the same lines have changed since the commit it was created on: these files are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: { $name } stays in the list.
+stash-notice-help-pop = { $name } was applied, but the same lines have changed since the commit it was created on: these files are conflicted (with git's markers where git put them). The stash's other files are applied. Nothing is lost: { $name } stays in the list (the pop doesn't drop it).
+stash-notice-how = To resolve them: click a file, choose in the conflict editor and “Mark as resolved” (or fix the file and stage it from the changes area). Then, if it's no longer needed, drop the stash. While conflicts remain, neither Stash nor Apply is possible.

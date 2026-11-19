@@ -172,24 +172,35 @@ fn conflicts_line(
         };
         return;
     }
-    ui.horizontal_wrapped(|ui| {
-        ui.label(tr!("merge-conflicts-label", n = n));
-        let open = repo.conflict.editor().map(|e| &e.path);
-        for path in info.conflicts.iter().take(merge::BANNER_FILES) {
-            file_link(ui, path, open == Some(path), actions);
+    ui.horizontal_wrapped(|ui| conflict_links(ui, repo, &info.conflicts, actions));
+}
+
+/// How many files are conflicted, the first ones as links (a click opens the conflict editor)
+/// and how many more there are. Inside a wrapping row: also the notice of the conflicts a stash
+/// left uses it.
+pub(crate) fn conflict_links(
+    ui: &mut Ui,
+    repo: &RepoView,
+    conflicts: &[RepoPath],
+    actions: &mut Vec<Action>,
+) {
+    let n = conflicts.len();
+    ui.label(tr!("merge-conflicts-label", n = n));
+    let open = repo.conflict.editor().map(|e| &e.path);
+    for path in conflicts.iter().take(merge::BANNER_FILES) {
+        file_link(ui, path, open == Some(path), actions);
+    }
+    if n > merge::BANNER_FILES {
+        let more = n - merge::BANNER_FILES;
+        if ui
+            .link(tr!("merge-more-files", n = more))
+            .on_hover_text(tr!("merge-more-files-hint"))
+            .clicked()
+        {
+            actions.push(Action::SelectWorktree);
         }
-        if n > merge::BANNER_FILES {
-            let more = n - merge::BANNER_FILES;
-            if ui
-                .link(tr!("merge-more-files", n = more))
-                .on_hover_text(tr!("merge-more-files-hint"))
-                .clicked()
-            {
-                actions.push(Action::SelectWorktree);
-            }
-        }
-        ui.weak(tr!("merge-click-to-resolve"));
-    });
+    }
+    ui.weak(tr!("merge-click-to-resolve"));
 }
 
 fn file_link(ui: &mut Ui, path: &RepoPath, open: bool, actions: &mut Vec<Action>) {

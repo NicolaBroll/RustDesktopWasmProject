@@ -374,7 +374,7 @@ fn sync_badges(upstream: Option<&Upstream>) -> (Option<String>, Option<String>) 
 }
 
 /// The "Pull" and "Push" buttons of the active branch. Never a forced push from here: force is
-/// offered only in the window of a rejected push.
+/// offered only in the details of a rejected push.
 fn sync_buttons(ui: &mut Ui, repo: &RepoView, enabled: bool, actions: &mut Vec<Action>) {
     let branch = current_branch(&repo.head);
     let tracked = repo.status.as_ref().and_then(|s| s.upstream.as_ref());

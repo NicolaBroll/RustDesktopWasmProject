@@ -395,7 +395,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   engine error now gets the generic failure dialog), the UI's own pull `Strategy`.
 
 ### U63 — Rejected push and stash conflicts are notices in the tab
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** `rejected_window` and `stash_conflicts_window` are floating windows at the top of
   the tab: they cover the toolbar (Pull, Push, Undo) and, at 760x520, the whole graph or the
   conflict editor; Esc does not close them and they stay after the conflict is resolved. Both
@@ -408,6 +408,19 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   is there after a restart too.
 - **Done when:** on Xvfb at 760x520 the toolbar and the graph stay visible in both cases; the
   stash notice disappears when the file is marked as resolved; smoke tests; CI green.
+- **Done:** `view::rejected_notice` (state `SyncBox::rejected`, kept apart from the dialogs):
+  what was rejected and what to do on a wrapping line, "Pull" or "Fetch", "Details…" and "×".
+  "Details…" is the modal `sync::Window::Details` (explanation, git's text, "Copy message",
+  "Force (with lease)…" → `confirm_force`). The notice goes with a successful push of that
+  branch, a pull of it from the app (also one that stops on a conflict: the operation panel
+  takes over), "behind, then no longer behind" in the refs (`SyncBox::follow`, before every
+  frame), a change of the current branch, "×". `view::stash_conflicts_notice` comes from the
+  status (`StashBox::follow_status`: conflicted files and no operation in progress), names
+  the stash after an apply or pop of this session, lists the files with the links of the
+  merge panel (`merge_view::conflict_links`) and has the long explanation on hover; an apply
+  or pop with conflicts selects "Uncommitted changes". Neither counts in `modal_open` and the
+  automatic fetch does not wait for them. Removed: both floating windows, "Go to changes",
+  their texts.
 
 ### U64 — Keyboard: visible focus, file lists, dialogs
 - [ ] **Agent:** `egui-ui`

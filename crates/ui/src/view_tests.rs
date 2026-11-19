@@ -599,6 +599,83 @@ fn stash_dialog_panel_and_drop() {
 }
 
 #[test]
+fn conflicts_left_by_a_stash_are_a_notice() {
+    use crate::conflict::Action as C;
+    use crate::stash::Action as S;
+    let mut screen = Screen::open(crate::test_util::stash_in_conflict());
+    let id = screen.repo().stash.list().unwrap_or_default()[0].id;
+    // The pop stops on a conflict: the notice names the stash and the file, and the stage
+    // area opens. No dialog, nothing floating over the bar.
+    let painted = screen.shows(
+        A::Stash(S::Apply(id, true)),
+        &[
+            "Conflicts from stash@{0}, which stays in the list",
+            "1 conflicted file:",
+            "README.md",
+            "click one to open the editor and resolve it",
+            "Uncommitted changes",
+        ],
+    );
+    assert!(screen.repo().worktree_selected);
+    assert!(!screen.repo().modal_open(), "the notice blocks nothing");
+    assert!(!screen.repo().auto_fetch_blocked());
+    assert!(
+        !painted.iter().any(|p| p.text == "Go to changes"),
+        "the floating window is gone"
+    );
+    let top = |text: &str| {
+        let found = painted.iter().find(|p| p.text.contains(text));
+        found
+            .unwrap_or_else(|| panic!("{text:?} is not on screen"))
+            .pos
+            .y
+    };
+    assert!(top("Fetch") < top("Conflicts from stash@{0}"));
+    assert!(top("Conflicts from stash@{0}") < top("Uncommitted changes"));
+
+    // The file in the notice opens the conflict editor, with the notice still above it.
+    let painted = screen.click_on(&painted, "README.md", Primary);
+    assert_shows(
+        &painted,
+        &[
+            "Mark as resolved",
+            "Conflicts from stash@{0}",
+            "Base (common ancestor)",
+        ],
+    );
+    // Resolved: the last conflict is gone and the notice with it.
+    screen.act(A::Conflict(C::ChooseAll(project_domain::Choice::Ours)));
+    let painted = screen.act(A::Conflict(C::Resolve));
+    assert_eq!(
+        screen.repo().stash.conflicts(),
+        None,
+        "{}",
+        screen.tab().error
+    );
+    assert!(!painted.iter().any(|p| p.text.contains("Conflicts from")));
+
+    // After a restart nobody remembers the pop: the status alone brings the notice back.
+    let mut repo = crate::test_util::stash_in_conflict();
+    {
+        use project_engine::{GitStash, StashApply};
+        let stash = repo.stashes().unwrap().remove(0);
+        let applied = repo
+            .stash_apply(&StashApply {
+                command: "stash.apply",
+                id: stash.id,
+                restore_index: false,
+            })
+            .unwrap();
+        assert!(!applied.conflicts.is_empty());
+    }
+    let mut screen = Screen::open(repo);
+    let painted =
+        screen.shows_frames(&["Conflicts from a stash", "1 conflicted file:", "README.md"]);
+    assert!(!screen.repo().modal_open());
+    assert!(!painted.iter().any(|p| p.text.contains("stash@{0}, which")));
+}
+
+#[test]
 fn merge_pick_and_reset_dialogs() {
     use crate::merge::{Action as M, Pick};
     use crate::reset;
@@ -734,32 +811,97 @@ fn a_rejected_push_and_failed_network_commands() {
     use crate::sync::Action as S;
     use project_engine::FetchFailure;
     let mut screen = Screen::open(diverged());
-    screen.shows(
+    // A rejected push is a notice in the tab: no dialog, git's text only in the details.
+    // (The status bar says "rejected" too: this is the text of the notice alone.)
+    const NOTICE: &str = "Pull to integrate them, then push again";
+    let painted = screen.shows(
         A::Sync(S::Push(None)),
         &[
-            "Push rejected",
-            "[rejected] (fetch first)",
-            "Force (with lease)…",
+            "Push of “main” rejected",
+            "The remote has commits you don't have: Pull to integrate them",
+            "Details…",
+            "×",
         ],
     );
-    screen.act(A::Sync(S::Dismiss));
-    // After the fetch the force would remove a commit from the remote: it asks.
+    assert!(
+        painted.iter().any(|p| p.text == "Pull"),
+        "“Pull” is offered"
+    );
+    assert!(!screen.repo().modal_open(), "the notice blocks nothing");
+    assert!(!screen.repo().auto_fetch_blocked());
+    assert!(
+        !painted.iter().any(|p| p.text.contains("[rejected]")),
+        "git's text is in the details"
+    );
+    // The notice is under the bar, above the graph: it covers neither.
+    let top = |text: &str| {
+        let found = painted.iter().find(|p| p.text.contains(text));
+        found
+            .unwrap_or_else(|| panic!("{text:?} is not on screen"))
+            .pos
+            .y
+    };
+    assert!(top("Fetch") < top(NOTICE));
+    assert!(top(NOTICE) < top("Commit panel"));
+    // "Details…": a modal dialog with the whole explanation, git's text and the force.
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    screen.shows(
+        A::Sync(S::RejectedDetails),
+        &[
+            "Nothing changed, neither on the remote nor locally",
+            "Message from git:",
+            "[rejected] (fetch first)",
+            "Copy message",
+            "Force (with lease)…",
+            "Close",
+        ],
+    );
+    assert!(screen.repo().modal_open());
+    screen.frame(vec![key(egui::Key::Escape)]);
+    let painted = screen.shows_frames(&[NOTICE]);
+    assert!(!screen.repo().modal_open(), "Esc closes the details");
+    assert!(!painted.iter().any(|p| p.text.contains("[rejected]")));
+    // "×" hides the notice.
+    let painted = screen.act(A::Sync(S::DismissRejected));
+    assert!(!painted.iter().any(|p| p.text.contains(NOTICE)));
+
+    // After the fetch the force would remove a commit from the remote: it asks. The branch is
+    // behind, so the notice of the push rejected again stays.
     screen.shows(A::Fetch(F::Fetch(None)), &["From the remote", "↑1 ↓1"]);
-    screen.act(A::Sync(S::Push(None)));
+    screen.shows(A::Sync(S::Push(None)), &[NOTICE]);
+    screen.act(A::Sync(S::RejectedDetails));
     screen.shows(
         A::Sync(S::ForcePush),
         &["Force push of “main”: overwrite the branch on the remote?"],
     );
 
     // No local changes here: a commit can be checked out, and the bar says HEAD is detached.
-    screen.act(A::Sync(S::Dismiss));
-    screen.shows(
+    // The current branch changed: the notice has nothing more to say.
+    screen.shows(A::Sync(S::Dismiss), &[NOTICE]);
+    let painted = screen.shows(
         A::Branch(crate::branch::Action::CheckoutCommit {
             id: oid(9),
             ask: false,
         }),
         &["Detached at aeaf52f", "Create branch here…"],
     );
+    assert!(!painted.iter().any(|p| p.text.contains(NOTICE)));
+
+    // "Pull" from the notice integrates the remote's commits: the notice goes away.
+    let mut screen = Screen::open(diverged());
+    let painted = screen.shows(A::Sync(S::Push(None)), &[NOTICE]);
+    let row = painted.iter().find(|p| p.text == "Details…").unwrap().pos.y;
+    let pull = painted.iter().find(|p| p.text == "Pull" && p.pos.y == row);
+    let pull = pull.expect("“Pull” in the notice").pos;
+    let painted = screen.click(pull + egui::vec2(4.0, 6.0), Primary);
+    assert!(!painted.iter().any(|p| p.text.contains(NOTICE)));
+    assert_eq!(screen.repo().sync.rejected(), None);
 
     let mut repo = MemoryBackend::sample();
     let git = "fatal: could not read Username for 'https://example.com'";
@@ -777,13 +919,6 @@ fn a_rejected_push_and_failed_network_commands() {
     );
     // The failure is a modal dialog: the arrows do not move the selection under it, and Esc
     // closes it.
-    let key = |key| egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::NONE,
-    };
     let selected = screen.repo().list.selected();
     screen.frame(vec![key(egui::Key::ArrowDown)]);
     screen.frames(2);

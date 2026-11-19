@@ -230,13 +230,12 @@ pub fn news_text(moved: &[RefUpdate], commits: &[Commit]) -> String {
 }
 
 impl RepoView {
-    /// Something the automatic fetch waits for: a dialog open (the one of a failure too) or the
-    /// rejected push window, an operation in progress (merge, rebase, cherry-pick, revert), the
-    /// status not read yet.
+    /// Something the automatic fetch waits for: a dialog open (the one of a failure too), the
+    /// conflict editor, an operation in progress (merge, rebase, cherry-pick, revert), the
+    /// status not read yet. The notices in the tab (a rejected push, the conflicts a stash
+    /// left) are not dialogs: it does not wait for them.
     pub(crate) fn auto_fetch_blocked(&self) -> bool {
         self.modal_open()
-            || self.sync.window().is_some()
-            || self.stash.conflicts().is_some()
             || self.conflict.editor().is_some()
             || self.status.as_ref().is_none_or(|s| s.operation.is_some())
     }

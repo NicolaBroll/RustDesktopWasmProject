@@ -22,7 +22,6 @@ reset-hard-backup = Prima vengono salvate in un backup (refs/project/backup/rese
 reset-hard-untracked = I file non tracciati non vengono toccati.
 reset-warning = Attenzione: { $warning }
 reset-button = Reset ({ $mode })
-reset-cancel = Annulla
 reset-sending = Reset in corso…
 reset-label = Reset ({ $mode }) di { $moving } a { $id }
 reset-refused = Il reset è stato rifiutato, non è cambiato niente: { $error }

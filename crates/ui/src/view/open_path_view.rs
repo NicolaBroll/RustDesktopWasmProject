@@ -42,14 +42,14 @@ pub(crate) fn open_path_dialog(
             let target = dialog.target();
             let open = ui.add_enabled(
                 target.is_some(),
-                egui::Button::new(tr!("tabs-open-path-open")),
+                primary_button(ui, tr!("tabs-open-path-open"), target.is_some()),
             );
             if let Some(target) = target
                 && (open.clicked() || enter)
             {
                 push(actions, tabs::Action::Open(target.to_owned()));
             }
-            if ui.button(tr!("tabs-open-path-cancel")).clicked() {
+            if ui.add(cancel_button()).clicked() {
                 push(actions, tabs::Action::ClosePath);
             }
         });

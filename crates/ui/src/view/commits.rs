@@ -466,12 +466,10 @@ fn search_bar(ui: &mut Ui, search: &SearchBox, focus: bool, actions: &mut Vec<Ac
 /// The toggles "Content", "Regex" and "Aa" (the last two only for content).
 fn search_options(ui: &mut Ui, options: search::Options, actions: &mut Vec<Action>) {
     let mut next = options;
-    ui.toggle_value(&mut next.content, tr!("search-content"))
-        .on_hover_text(tr!("search-content-tip"));
+    toggle(ui, &mut next.content, tr!("search-content")).on_hover_text(tr!("search-content-tip"));
     ui.add_enabled_ui(options.content, |ui| {
-        ui.toggle_value(&mut next.regex, tr!("search-regex"))
-            .on_hover_text(tr!("search-regex-tip"));
-        ui.toggle_value(&mut next.ignore_case, "Aa")
+        toggle(ui, &mut next.regex, tr!("search-regex")).on_hover_text(tr!("search-regex-tip"));
+        toggle(ui, &mut next.ignore_case, "Aa".to_owned())
             .on_hover_text(tr!("search-ignore-case-tip"));
     });
     if next != options {
@@ -480,6 +478,18 @@ fn search_options(ui: &mut Ui, options: search::Options, actions: &mut Vec<Actio
             ui.input(|i| i.time),
         )));
     }
+}
+
+/// A button that stays pressed: a button's frame when off, so it reads as something to press
+/// and not as a label, and when on the selection's fill of the unified/split buttons of the
+/// diff header.
+fn toggle(ui: &mut Ui, on: &mut bool, label: String) -> egui::Response {
+    let mut response = ui.add(egui::Button::new(label).selected(*on));
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    response
 }
 
 /// The stroke from the changes ring down to HEAD's dot, if HEAD's column is

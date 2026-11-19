@@ -134,6 +134,10 @@ impl Platform for NativePlatform {
     fn open_file(&self, file: &Path, editor: &str) -> std::io::Result<()> {
         launch::open_file(file, editor)
     }
+
+    fn home_folder(&self) -> Option<std::path::PathBuf> {
+        std::env::home_dir()
+    }
 }
 
 /// The language of the POSIX locale variables, in their order of precedence (`LC_ALL`,

@@ -505,7 +505,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   credentials git's configuration does not give.
 
 ### U67 — Finding things, dialogs, small polish
-- [ ] **Agent:** `egui-ui`
+- [x] **Agent:** `egui-ui`
 - **Goal:** a new branch or tag starts only from a context menu ("Remotes" and "Stashes" have a
   "+", "Local branches" and "Tags" do not); ticking "Amend" pushes the fields up by four lines
   of warning; the main button of the dialogs looks like "Close" (only "Commit" is primary), and
@@ -516,6 +516,22 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
   are uncommitted changes.
 - **Done when:** screenshots; unit tests of the proposed clone folder and of the first
   selection; CI green.
+- **Done:** "+" on "Local branches" (new branch from HEAD, as Ctrl+B) and on "Tags" (new tag
+  on HEAD), disabled with the reason before the first commit. The amend warning is one cut
+  row in the hint row under "Commit" (whole on hover): the box no longer moves. Dialogs: one
+  `primary_button` / `danger_button` / `cancel_button` (`view.rs`); the default button has the
+  accent of "Commit", the other one says "Cancel" in every dialog that does something (also
+  where it said "Don't discard", "Don't delete", "Don't force"…; "Don't abort" and "Back to
+  the plan" stay), Italian "Chiudi" because "Annulla" is Undo and the confirmations name it;
+  a running clone or fetch is ended with "Stop"; the settings window is as tall as its
+  tallest page. The failed automatic fetch is a badge on "Fetch" and a line in its tooltip.
+  The search options are framed toggle buttons. Blame and file history go back with
+  "< Graph". The clone dialog proposes `<folder of the last repo, or home>/<name from the
+  URL>` until a folder is typed (`clone::proposed_folder`, `tabs::clone_base`; the home
+  folder is read with `std::env::home_dir`, there is no `Platform` call for it) and a
+  finished clone says "Cloned <name> into <folder>". A repo with uncommitted changes opens
+  on them (first status of the tab only). Light theme: the scrollbar handle under the mouse
+  is a mid grey (`theme::light_scroll`).
 
 ### U68 — "Stash and retry", toolbar at large scale
 - [ ] **Agent:** `egui-ui`, then `safety-reviewer`

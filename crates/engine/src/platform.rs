@@ -62,6 +62,11 @@ pub trait Platform: Send + Sync {
     fn system_language(&self) -> Option<String> {
         None
     }
+    /// The user's home folder, where a new clone is proposed when no repo was opened yet.
+    /// `None`: not known (the default, test platforms).
+    fn home_folder(&self) -> Option<std::path::PathBuf> {
+        None
+    }
     /// Shows `folder` in the system's file manager, without waiting for it. The default (test
     /// platforms, see [`Capabilities::external_apps`]): [`std::io::ErrorKind::Unsupported`].
     fn show_folder(&self, folder: &Path) -> std::io::Result<()> {

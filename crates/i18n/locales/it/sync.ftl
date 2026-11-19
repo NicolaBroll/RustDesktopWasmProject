@@ -95,7 +95,6 @@ sync-force-confirm-changed = Il branch remoto è cambiato da quando hai visto qu
 sync-force-confirm-lost = Cosa si perde sul remoto:
 sync-force-confirm-button = Forza il push
 sync-force-confirm-gone = Il branch remoto locale non c'è più: chiudi, fai Fetch e riprova
-sync-force-confirm-cancel = Non forzare
 sync-label-push-tag = Push del tag «{ $tag }» su «{ $remote }»
 sync-push-tag-new = Tag «{ $tag }» pubblicato su «{ $remote }» (su { $id })
 sync-push-tag-new-annotated = Tag annotato «{ $tag }» pubblicato su «{ $remote }» (su { $id })

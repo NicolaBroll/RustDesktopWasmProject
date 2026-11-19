@@ -65,9 +65,12 @@ pub(crate) fn settings_window(
                 }
             });
             ui.add_space(GAP);
-            ui.vertical(|ui| match window.section {
-                Section::General => general(ui, settings, actions),
-                Section::Remotes => remotes(ui, settings, actions),
+            ui.vertical(|ui| {
+                // One size for every page: the window is as tall as its tallest page, so it
+                // neither resizes nor moves (a modal is centered) when the page changes.
+                let tallest = tallest_page(ui, settings);
+                ui.set_min_height(tallest);
+                page(ui, window.section, settings, actions);
             });
             sections.response.rect.max.x + GAP / 2.0
         });
@@ -89,6 +92,34 @@ pub(crate) fn settings_window(
     if modal.inner || modal.should_close() {
         actions.push(Action::Settings(settings::Action::Close));
     }
+}
+
+/// The content of a page of the window.
+fn page(ui: &mut Ui, section: Section, settings: &Settings, actions: &mut Vec<Action>) {
+    match section {
+        Section::General => general(ui, settings, actions),
+        Section::Remotes => remotes(ui, settings, actions),
+    }
+}
+
+/// The height of the tallest page in the room `ui` has: every page is laid out without being
+/// painted (and without taking clicks), since their heights depend on the language, the scale
+/// and the width.
+fn tallest_page(ui: &mut Ui, settings: &Settings) -> f32 {
+    let room = ui.available_rect_before_wrap();
+    Section::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(index, section)| {
+            let builder = egui::UiBuilder::new()
+                .id_salt(("settings-measure", index))
+                .max_rect(room)
+                .invisible();
+            let mut child = ui.new_child(builder);
+            page(&mut child, section, settings, &mut Vec::new());
+            child.min_rect().height()
+        })
+        .fold(0.0, f32::max)
 }
 
 /// Theme, language, UI scale, dates, the detached HEAD confirmation and the external editor.

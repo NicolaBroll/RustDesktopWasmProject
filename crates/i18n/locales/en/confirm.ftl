@@ -18,7 +18,6 @@ confirm-resolve-button = { $n ->
     [one] Mark as resolved
    *[other] Mark all as resolved
 }
-confirm-cancel = Cancel
 confirm-discard-title = Discard changes?
 confirm-discard-body = Unstaged changes are removed: each file goes back to its staged version, or to the last commit if nothing of it is staged. Staged changes and untracked files are not touched.
 confirm-discard-backup = “Undo” in the top bar brings the files back as they are now, as long as they are not modified again.
@@ -32,7 +31,6 @@ confirm-discard-button = { $n ->
     [one] Discard changes
    *[other] Discard all changes
 }
-confirm-discard-keep = Don't discard
 confirm-discard-lines-title = Discard { $n ->
     [one] 1 changed line
    *[other] { $n } changed lines

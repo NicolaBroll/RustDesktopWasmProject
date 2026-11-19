@@ -129,17 +129,15 @@ pub(super) fn name_dialog(ui: &mut Ui, dialog: &branch::NameDialog, actions: &mu
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let can = dialog.can_submit();
         let clicked = ui
-            .add_enabled(dialog.can_submit(), egui::Button::new(button))
+            .add_enabled(can, primary_button(ui, button, can))
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
             actions.push(Action::Branch(branch::Action::SubmitName));
         }
         if ui
-            .add_enabled(
-                dialog.running.is_none(),
-                egui::Button::new(tr!("branch-close")),
-            )
+            .add_enabled(dialog.running.is_none(), cancel_button())
             .clicked()
         {
             actions.push(Action::Branch(branch::Action::CloseDialog));
@@ -170,14 +168,11 @@ pub(super) fn delete_dialog(
     ui.add(egui::Label::new(tr!("branch-delete-backup")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("branch-delete-button")).color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("branch-delete-button"));
         if ui.add(button).clicked() {
             actions.push(Action::Branch(branch::Action::ConfirmDeleteBranch));
         }
-        if ui.button(tr!("branch-dont-delete")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
@@ -200,14 +195,11 @@ pub(super) fn delete_tag_dialog(
     ui.add(egui::Label::new(tr!("branch-tag-delete-backup")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("branch-tag-delete-button")).color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("branch-tag-delete-button"));
         if ui.add_enabled(delete.expected.is_some(), button).clicked() {
             actions.push(Action::Branch(branch::Action::ConfirmDeleteTag));
         }
-        if ui.button(tr!("branch-dont-delete")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
@@ -233,7 +225,10 @@ pub(super) fn detach_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        if ui.button(tr!("detach-button")).clicked() {
+        if ui
+            .add(primary_button(ui, tr!("detach-button"), true))
+            .clicked()
+        {
             if dialog.dont_ask {
                 actions.push(Action::Settings(crate::settings::Action::Change(
                     crate::settings::Change::SkipDetachConfirm(true),
@@ -241,7 +236,7 @@ pub(super) fn detach_dialog(
             }
             actions.push(Action::Branch(branch::Action::ConfirmCheckoutCommit));
         }
-        if ui.button(tr!("confirm-cancel")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
     });
@@ -326,19 +321,14 @@ pub(super) fn upstream_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let can = dialog.can_submit();
         let clicked = ui
-            .add_enabled(
-                dialog.can_submit(),
-                egui::Button::new(tr!("branch-upstream-button")),
-            )
+            .add_enabled(can, primary_button(ui, tr!("branch-upstream-button"), can))
             .clicked();
         if (clicked || enter) && dialog.can_submit() {
             actions.push(Action::Branch(branch::Action::SubmitUpstream));
         }
-        if ui
-            .add_enabled(idle, egui::Button::new(tr!("branch-close")))
-            .clicked()
-        {
+        if ui.add_enabled(idle, cancel_button()).clicked() {
             actions.push(Action::Branch(branch::Action::CloseDialog));
         }
         if !idle {

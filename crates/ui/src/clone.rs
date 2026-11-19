@@ -1,7 +1,7 @@
 //! Clone and new repository (S46): "Clone…" and "New repository…" in the File menu and on the
 //! empty screen open a dialog (URL for the clone, destination folder with "Browse…", optional
 //! branch and, for the clone, depth). "Clone" sends `repo.clone` in the background with progress
-//! and "Cancel"; "Create" sends `repo.init`. Both open the new repo in the session that ran them:
+//! and "Stop"; "Create" sends `repo.init`. Both open the new repo in the session that ran them:
 //! [`App`](crate::App) then shows it in a tab and puts it in the recent list. Data only, no egui.
 //! Command contract in `impl-docs/git/clone.md`.
 
@@ -24,7 +24,7 @@ pub(crate) enum Action {
     Browse,
     /// "Clone"/"Create" in that dialog.
     Submit,
-    /// "Cancel" the clone in progress.
+    /// "Stop" the clone in progress.
     Cancel,
     /// Closes that dialog (not while its command runs).
     Close,
@@ -75,6 +75,15 @@ pub struct CloneDialog {
     pub failure: Option<Failure>,
     /// The last clone was cancelled: the folder was cleaned up.
     pub cancelled: bool,
+    /// The folder a clone is proposed to go into, with the name from the URL added: the one the
+    /// app gave on opening (see [`CloneBox::open`]) or the one chosen with "Browse…". `None`:
+    /// nothing is proposed.
+    base: Option<String>,
+    /// `base` was chosen with "Browse…": it is the destination while the URL gives no name.
+    base_chosen: bool,
+    /// The user typed in the folder field: it is theirs, the URL no longer changes it (until
+    /// they empty it).
+    path_typed: bool,
 }
 
 impl CloneDialog {
@@ -130,6 +139,25 @@ pub fn repo_name(url: &str) -> Option<&str> {
     (!name.is_empty() && name != "." && name != "..").then_some(name)
 }
 
+/// The destination proposed for a clone of `url` inside `base`: `base` plus the name from the
+/// URL ([`repo_name`]). `None` if the URL gives no name yet.
+pub fn proposed_folder(base: &str, url: &str) -> Option<String> {
+    let name = repo_name(url)?;
+    Some(Path::new(base).join(name).to_string_lossy().into_owned())
+}
+
+/// The status-bar message of a finished clone: what was cloned and where, then git's
+/// messages (e.g. that the repository is empty).
+fn cloned_notice(url: &str, folder: &str, messages: &[String]) -> String {
+    let name = repo_name(url).or_else(|| repo_name(folder)).unwrap_or(url);
+    let mut notice = tr!("clone-done", name = name, folder = folder);
+    for message in messages {
+        notice.push(' ');
+        notice.push_str(message);
+    }
+    notice
+}
+
 /// What came back from the dialog's command.
 #[derive(Debug)]
 pub enum Received {
@@ -160,8 +188,9 @@ impl CloneBox {
     }
 
     /// Opens the dialog for `kind`; an open one with the same kind stays as it is, one of the other
-    /// kind is replaced (not while it is running).
-    pub fn open(&mut self, kind: Kind) {
+    /// kind is replaced (not while it is running). `base`: the folder where a clone is proposed
+    /// to go (the destination follows the URL until the user types one), if the app knows one.
+    pub fn open(&mut self, kind: Kind, base: Option<String>) {
         match &self.dialog {
             Some(d) if d.running.is_some() || d.kind == kind => {}
             _ => {
@@ -171,6 +200,9 @@ impl CloneBox {
                     running: None,
                     failure: None,
                     cancelled: false,
+                    base: base.filter(|b| !b.trim().is_empty()),
+                    base_chosen: false,
+                    path_typed: false,
                 });
             }
         }
@@ -184,24 +216,45 @@ impl CloneBox {
         }
     }
 
-    /// The fields typed, ignored while the command runs.
-    pub fn set_fields(&mut self, fields: Fields) {
-        if let Some(d) = self.dialog.as_mut().filter(|d| d.running.is_none()) {
-            d.fields = fields;
+    /// The fields typed, ignored while the command runs. For a clone, while the user has not
+    /// typed a folder, the folder follows the URL: [`proposed_folder`] in the dialog's base.
+    pub fn set_fields(&mut self, mut fields: Fields) {
+        let Some(d) = self.dialog.as_mut().filter(|d| d.running.is_none()) else {
+            return;
+        };
+        if fields.path != d.fields.path {
+            d.path_typed = !fields.path.trim().is_empty();
         }
+        if d.kind == Kind::Clone
+            && !d.path_typed
+            && let Some(base) = &d.base
+        {
+            fields.path = match proposed_folder(base, &fields.url) {
+                Some(path) => path,
+                None if d.base_chosen => base.clone(),
+                None => String::new(),
+            };
+        }
+        d.fields = fields;
     }
 
     /// The folder chosen with "Browse…": for a clone the folder that will contain it (the
-    /// destination is the folder plus the name from the URL), for a new repository the folder
-    /// itself.
+    /// destination is the folder plus the name from the URL, and goes on following the URL), for
+    /// a new repository the folder itself.
     pub fn set_folder(&mut self, folder: &str) {
         let Some(d) = self.dialog.as_mut().filter(|d| d.running.is_none()) else {
             return;
         };
-        d.fields.path = match (d.kind, repo_name(&d.fields.url)) {
-            (Kind::Clone, Some(name)) => Path::new(folder).join(name).to_string_lossy().into(),
-            _ => folder.to_owned(),
+        let proposed = match d.kind {
+            Kind::Clone => {
+                d.base = Some(folder.to_owned());
+                d.base_chosen = true;
+                d.path_typed = false;
+                proposed_folder(folder, &d.fields.url)
+            }
+            Kind::Init => None,
         };
+        d.fields.path = proposed.unwrap_or_else(|| folder.to_owned());
     }
 
     /// The command and parameters to send for "Clone"/"Create", if they can be sent.
@@ -219,7 +272,7 @@ impl CloneBox {
         }
     }
 
-    /// "Cancel" during the clone: the ticket to cancel, only once.
+    /// "Stop" during the clone: the ticket to cancel, only once.
     pub fn cancel(&mut self) -> Option<Ticket> {
         self.dialog.as_mut()?.running.as_mut()?.cancel()
     }
@@ -243,23 +296,24 @@ impl CloneBox {
         let error = match result {
             Ok(value) => {
                 // `repo.init` gives a `RepoOpenResult`, without git's messages.
-                let messages = match d.kind {
-                    Kind::Clone => serde_json::from_value::<RepoCloneResult>(value.clone())
-                        .map(|r| r.messages)
-                        .unwrap_or_default(),
-                    Kind::Init => Vec::new(),
+                let notice = match d.kind {
+                    Kind::Clone => {
+                        let url = d.fields.url.trim();
+                        match serde_json::from_value::<RepoCloneResult>(value.clone()) {
+                            Ok(r) => cloned_notice(url, &r.opened.path, &r.messages),
+                            Err(_) => cloned_notice(url, d.fields.path.trim(), &[]),
+                        }
+                    }
+                    Kind::Init => String::new(),
                 };
                 self.dialog = None;
-                return Received::Opened {
-                    value,
-                    notice: messages.join(" "),
-                };
+                return Received::Opened { value, notice };
             }
             Err(error) => error,
         };
         let who = tr!("clone-who", url = d.fields.url.trim());
         d.failure = match kind {
-            // A credential question cancelled: as "Cancel", the folder is put back.
+            // A credential question cancelled: as "Stop", the folder is put back.
             Some(ErrorKind::Cancelled | ErrorKind::AuthCancelled) => {
                 d.cancelled = true;
                 None

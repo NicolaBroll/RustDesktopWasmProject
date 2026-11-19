@@ -281,32 +281,6 @@ pub(super) fn commit_box(
     if toggle.changed() {
         actions.push(Action::Commit(commit::Action::SetAmend(amend)));
     }
-    if draft.amend() {
-        let mut text = match repo.head_commit() {
-            Some(c) => tr!(
-                "stage-amend-warning-summary",
-                id = c.id.short(),
-                summary = &c.summary
-            ),
-            None => match repo.head.target() {
-                Some(id) => tr!("stage-amend-warning-id", id = id.short()),
-                None => tr!("stage-amend-warning"),
-            },
-        };
-        if draft.is_proposed() {
-            text.push(' ');
-            text.push_str(&tr!("stage-amend-proposed"));
-        }
-        ui.add(
-            egui::Label::new(
-                RichText::new(text)
-                    .small()
-                    .color(ui.visuals().warn_fg_color),
-            )
-            .wrap(),
-        );
-    }
-
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         let label = if draft.amend() {
@@ -314,14 +288,7 @@ pub(super) fn commit_box(
         } else {
             tr!("stage-commit-button")
         };
-        // The primary action: the accent fill when it can go, egui's grey when it cannot.
-        let button = if gate.is_ok() {
-            let (fill, text) = theme::primary(ui.visuals());
-            egui::Button::new(RichText::new(label).color(text)).fill(fill)
-        } else {
-            egui::Button::new(label)
-        };
-        let button = ui.add_enabled(gate.is_ok(), button);
+        let button = ui.add_enabled(gate.is_ok(), primary_button(ui, label, gate.is_ok()));
         let button = match gate {
             Ok(()) => button.on_hover_text(tr!("stage-commit-help")),
             Err(blocked) => button.on_disabled_hover_text(blocked.hint()),
@@ -341,19 +308,48 @@ pub(super) fn commit_box(
             ui.weak(tr!("stage-commit-shortcut"));
         }
     });
-    // Why the button is disabled, without having to hover, on one row cut to the width (the
-    // whole text is in the button's tooltip). During work and when the commit can go the row
-    // stays empty: the box does not move while typing, after a commit or when a dialog opens.
+    // One row cut to the width, always there: the box does not move while typing, after a
+    // commit, when a dialog opens or when "Amend" is ticked. It says why the button is disabled,
+    // without having to hover (the whole text is in the button's tooltip); when the commit can
+    // go and "Amend" is ticked, what the amend changes (whole on hover: a cut label shows its
+    // text); otherwise it stays empty.
     let hint = match gate {
-        Err(commit::Blocked::Busy) | Ok(()) => " ".to_owned(),
-        Err(blocked) => blocked.hint(),
+        Err(commit::Blocked::Busy) | Ok(()) => amend_warning(repo, draft).map_or_else(
+            || RichText::new(" ").weak(),
+            |text| RichText::new(text).color(ui.visuals().warn_fg_color),
+        ),
+        Err(blocked) => RichText::new(blocked.hint()).weak(),
     };
-    ui.add(egui::Label::new(RichText::new(hint).small().weak()).truncate());
+    ui.add(egui::Label::new(hint.small()).truncate());
 
     if let Some(error) = repo.commit.error() {
         commit_error(ui, error, actions);
     }
     body_height
+}
+
+/// What "Amend" does to the last commit, named by id and subject, while it is ticked: one
+/// sentence, and that the message proposed is the current one until it is edited.
+fn amend_warning(repo: &RepoView, draft: &CommitDraft) -> Option<String> {
+    if !draft.amend() {
+        return None;
+    }
+    let mut text = match repo.head_commit() {
+        Some(c) => tr!(
+            "stage-amend-warning-summary",
+            id = c.id.short(),
+            summary = &c.summary
+        ),
+        None => match repo.head.target() {
+            Some(id) => tr!("stage-amend-warning-id", id = id.short()),
+            None => tr!("stage-amend-warning"),
+        },
+    };
+    if draft.is_proposed() {
+        text.push(' ');
+        text.push_str(&tr!("stage-amend-proposed"));
+    }
+    Some(text)
 }
 
 /// The error of the last commit, with "x" to hide it and git's output, if any, with "Copy".

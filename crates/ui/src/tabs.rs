@@ -15,7 +15,7 @@ use project_engine::{NoDialog, Platform, Registry, RepoOpener, Session};
 use project_i18n::tr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -579,7 +579,10 @@ impl App {
 
     fn apply_clone(&mut self, ctx: &egui::Context, action: clone::Action) {
         match action {
-            clone::Action::Open(kind) => self.clone.open(kind),
+            clone::Action::Open(kind) => {
+                let base = clone_base(&self.recent, self.platform.home_folder());
+                self.clone.open(kind, base);
+            }
             clone::Action::Fields(fields) => self.clone.set_fields(fields),
             clone::Action::Browse => self.pick_folder(ctx, Pick::Destination),
             clone::Action::Submit => {
@@ -888,6 +891,17 @@ fn forget_field(ctx: &egui::Context) {
     ctx.data_mut(|d| d.remove::<egui::text_edit::TextEditState>(view::credential_field_id()));
 }
 
+/// The folder a new clone is proposed to go into: the one that holds the last repo opened or
+/// cloned (`recent`, most recent first), so the clones stay together; without one, `home`.
+fn clone_base(recent: &[String], home: Option<PathBuf>) -> Option<String> {
+    let beside = recent
+        .first()
+        .and_then(|repo| Path::new(repo).parent())
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf);
+    Some(beside.or(home)?.to_string_lossy().into_owned())
+}
+
 /// `path` at the top of the recent list, without duplicates and at most [`MAX_RECENT`].
 fn remember(recent: &mut Vec<String>, path: &str) {
     recent.retain(|p| p != path);
@@ -917,7 +931,7 @@ fn after_close(active: usize, closed: usize, len: usize) -> usize {
 
 /// The absolute path of `file` of the worktree at `root`; a non-UTF-8 path (the menus turn it
 /// off) is an error.
-fn absolute_file(root: &Path, file: &RepoPath) -> std::io::Result<std::path::PathBuf> {
+fn absolute_file(root: &Path, file: &RepoPath) -> std::io::Result<PathBuf> {
     let Some(relative) = file.to_str() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1177,6 +1191,70 @@ mod tests {
 
     fn paths(app: &App) -> Vec<Option<&str>> {
         app.tabs.iter().map(|t| t.path()).collect()
+    }
+
+    /// U67: a repo with uncommitted changes opens on them, a clean one on HEAD's commit; only
+    /// the first status of the tab chooses, a refresh leaves the selection where it is.
+    #[test]
+    fn the_first_selection_is_the_changes_when_there_are_some() {
+        let selection = |app: &App| {
+            let repo = app.tabs[app.active].repo.as_ref().expect("open repo");
+            let commit = repo.list.selected_commit().map(|c| c.id);
+            (repo.worktree_selected, commit)
+        };
+        let ctx = egui::Context::default();
+        let head = project_engine::GitRead::head(&MemoryBackend::sample())
+            .unwrap()
+            .target();
+        let mut app = app(Saved::default(), Some("a"));
+        // The repo is open: now the answers of what it asked on opening.
+        app.receive();
+        assert_eq!(
+            selection(&app),
+            (true, head),
+            "the changes, HEAD under them"
+        );
+        // A commit chosen by hand, then a refresh and a new status: it stays.
+        app.apply(&ctx, crate::Action::Select(2));
+        let chosen = selection(&app);
+        assert!(!chosen.0 && chosen.1.is_some() && chosen.1 != head);
+        app.apply(&ctx, crate::Action::Refresh);
+        app.receive();
+        assert_eq!(selection(&app), chosen, "not on refresh");
+
+        let mut clean = MemoryBackend::sample();
+        clean.set_entries(Vec::new());
+        let mut opener = MemoryOpener::new();
+        opener.insert("clean", clean);
+        let mut app = App::restore(
+            Arc::new(Inline),
+            Arc::new(opener),
+            Arc::new(|| {}),
+            Saved::default(),
+            Some("clean".to_owned()),
+        );
+        app.receive();
+        app.receive();
+        assert_eq!(selection(&app), (false, head), "nothing to commit: HEAD");
+    }
+
+    /// U67: a clone is proposed beside the last repo opened, or in the home folder.
+    #[test]
+    fn a_clone_is_proposed_beside_the_last_repo_or_at_home() {
+        let home = || Some(PathBuf::from("/home/me"));
+        let recent = ["/work/app".to_owned(), "/old/site".to_owned()];
+        assert_eq!(clone_base(&recent, home()).as_deref(), Some("/work"));
+        assert_eq!(clone_base(&[], home()).as_deref(), Some("/home/me"));
+        // A recent repo without a parent (a relative name, the root): home.
+        assert_eq!(
+            clone_base(&["repo".to_owned()], home()).as_deref(),
+            Some("/home/me")
+        );
+        assert_eq!(
+            clone_base(&["/".to_owned()], home()).as_deref(),
+            Some("/home/me")
+        );
+        assert_eq!(clone_base(&[], None), None);
     }
 
     #[test]
@@ -1641,7 +1719,7 @@ mod tests {
     /// Records the programs the app asks to start; `fail`: they do not start.
     #[derive(Default)]
     struct Launcher {
-        calls: Mutex<Vec<(&'static str, std::path::PathBuf, String)>>,
+        calls: Mutex<Vec<(&'static str, PathBuf, String)>>,
         fail: AtomicBool,
     }
 

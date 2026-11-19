@@ -401,22 +401,14 @@ pub(super) fn push_stash_dialog(
     }
     ui.add_space(10.0);
     ui.horizontal(|ui| {
+        let idle = dialog.running.is_none();
         let clicked = ui
-            .add_enabled(
-                dialog.running.is_none(),
-                egui::Button::new(tr!("stash-submit")),
-            )
+            .add_enabled(idle, primary_button(ui, tr!("stash-submit"), idle))
             .clicked();
         if (clicked || enter) && dialog.running.is_none() {
             actions.push(Action::Stash(stash::Action::Submit));
         }
-        if ui
-            .add_enabled(
-                dialog.running.is_none(),
-                egui::Button::new(tr!("stash-close")),
-            )
-            .clicked()
-        {
+        if ui.add_enabled(idle, cancel_button()).clicked() {
             actions.push(Action::Stash(stash::Action::CloseDialog));
         }
         if dialog.running.is_some() {
@@ -445,14 +437,11 @@ pub(super) fn drop_stash_dialog(
     ui.add(egui::Label::new(tr!("stash-drop-undo")).wrap());
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let button = egui::Button::new(
-            RichText::new(tr!("stash-drop-confirm")).color(ui.visuals().strong_text_color()),
-        )
-        .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+        let button = danger_button(ui, tr!("stash-drop-confirm"));
         if ui.add(button).clicked() {
             actions.push(Action::Stash(stash::Action::ConfirmDrop));
         }
-        if ui.button(tr!("stash-drop-keep")).clicked() {
+        if ui.add(cancel_button()).clicked() {
             actions.push(Action::Stash(stash::Action::CloseDialog));
         }
     });

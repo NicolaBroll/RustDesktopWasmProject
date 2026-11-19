@@ -1714,7 +1714,7 @@ mod tests {
         list(&registry, &mut session, &mut b);
         assert_eq!(b.names(), ["origin"]);
 
-        // "Don't remove" closes without sending anything.
+        // "Cancel" closes without sending anything.
         b.close();
         assert!(b.dialog().is_none());
         let params = b.start_remove("origin".into()).unwrap();

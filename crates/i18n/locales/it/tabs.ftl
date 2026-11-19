@@ -10,4 +10,3 @@ tabs-open-path-title = Apri repository
 tabs-open-path-explanation = Scrivi o incolla il percorso della cartella del repository.
 tabs-open-path-hint = /percorso/del/repository
 tabs-open-path-open = Apri
-tabs-open-path-cancel = Annulla

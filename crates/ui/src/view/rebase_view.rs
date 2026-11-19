@@ -117,19 +117,13 @@ fn plan_editor(ui: &mut Ui, editor: &Editor, width: f32, actions: &mut Vec<Actio
     ui.horizontal(|ui| {
         let ready = editing && check == Check::Ready;
         let run = ui
-            .add_enabled(
-                ready,
-                egui::Button::new(RichText::new(tr!("rebase-run")).strong()),
-            )
+            .add_enabled(ready, primary_button(ui, tr!("rebase-run"), ready))
             .on_hover_text(tr!("rebase-run-hint", branch = &editor.branch));
         if run.clicked() || (confirm && ready) {
             actions.push(Action::Rebase(rebase::Action::Run));
         }
         if ui
-            .add_enabled(
-                editor.phase != Phase::Sending,
-                egui::Button::new(tr!("rebase-close")),
-            )
+            .add_enabled(editor.phase != Phase::Sending, cancel_button())
             .clicked()
         {
             actions.push(Action::Rebase(rebase::Action::Close));
@@ -381,10 +375,7 @@ fn confirm_dialog(ctx: &egui::Context, reason: &str, actions: &mut Vec<Action>) 
         ui.add(egui::Label::new(RichText::new(reason).monospace()).wrap());
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let button = egui::Button::new(
-                RichText::new(tr!("rebase-confirm-button")).color(ui.visuals().strong_text_color()),
-            )
-            .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let button = danger_button(ui, tr!("rebase-confirm-button"));
             if ui.add(button).clicked() {
                 actions.push(Action::Rebase(rebase::Action::Confirm));
             }

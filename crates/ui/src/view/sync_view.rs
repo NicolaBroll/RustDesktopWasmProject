@@ -256,11 +256,7 @@ pub(super) fn confirm_force(
             });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let button = egui::Button::new(
-                RichText::new(tr!("sync-force-confirm-button"))
-                    .color(ui.visuals().strong_text_color()),
-            )
-            .fill(ui.visuals().error_fg_color.gamma_multiply(0.35));
+            let button = danger_button(ui, tr!("sync-force-confirm-button"));
             let response = ui
                 .add_enabled(!writing && confirm.can_confirm(), button)
                 .on_disabled_hover_text(if confirm.can_confirm() {
@@ -271,7 +267,7 @@ pub(super) fn confirm_force(
             if response.clicked() {
                 actions.push(Action::Sync(sync::Action::ConfirmForcePush));
             }
-            if ui.button(tr!("sync-force-confirm-cancel")).clicked() {
+            if ui.add(cancel_button()).clicked() {
                 actions.push(Action::Sync(sync::Action::Dismiss));
             }
         });

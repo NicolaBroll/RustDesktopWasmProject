@@ -274,6 +274,18 @@ what the UI shows (status, refs, first page of the log) for now lives in the UI.
 with the document snapshots of the original example was removed (S08): undo and redo
 exist only on the journal.
 
+`Session::reader()` gives a second session on the same repo that only reads it, for the UI's
+executor (§6): it has no journal, and `repo_mut`, `journal`, `repo_and_journal` and the functions
+that open a repo refuse on it (`NotAllowed`, `engine-reader-session`), so a command that is not a
+pure read fails there before changing anything. Its backend comes from `GitRead::reader`: the
+`CliBackend` gives the same repository (it keeps nothing of what it reads or writes), the
+`MemoryBackend` a copy of the repo as it is now, so a new reader is taken after every command
+that writes or opens. `CommandSpec::reader` says which commands may run there: every
+`Access::Read` one except `repo.open` and `edit.history` (`needs_session`), which read or change
+the session itself. The flag is not in the catalog of CLI and MCP, which have one session and
+run one command at a time. `Session::opens()` counts the repos opened, to know when the open
+one was replaced.
+
 ### Commands
 
 Every operation is a command with a stable id and JSON parameters. Reads return data
@@ -392,6 +404,33 @@ cancellation seen after the fetch stops the command before integrating, never in
 a rebase), the push uses it for the whole `git push` (cancelled midway, the remote may already
 have updated the branch).
 
+### Reads beside a write (Q43)
+
+A read no longer waits for the write in progress: a fetch, a push, a commit with a slow hook
+hold the session for seconds or minutes, and selecting a commit showed nothing until the end.
+The `Executor` keeps a second session, `Session::reader()` (§4), and runs there the commands
+with `CommandSpec::reader`; the others (writes, `repo.open`, `edit.history`) run on the session
+as before, one at a time. With no repo open there is no reader and the reads run on the session.
+The reads still run one at a time among themselves.
+
+Two rules keep the view right (`executor::Reading`):
+
+- **A command that writes or opens takes a new reader** before it answers, while it still holds
+  the session: the in-memory repo of the tests gives a copy, and `repo.open` changes repo. A read
+  in progress keeps the reader it started with.
+- **An answer read before a write ended never arrives after that write's answer.** The write
+  adds one to a counter before it answers; a read notes the counter when it starts and, with its
+  answer ready, sends it only if the counter is the same (check and send under one lock),
+  otherwise it reads again. So the UI sees either the read and then the write, whose answer
+  re-reads what it changed as it always did, or the write and then a read made after it: the new
+  status brought by an `index.stage` is not overwritten by a `repo.status` that started earlier.
+
+What a read may see is the repository in the middle of a write (a ref already moved by a fetch
+that is still running): the same as running `git log` in a terminal meanwhile. Reads take no lock
+in the repository (`--no-optional-locks`, `diff.autoRefreshIndex=false`, §5), so they cannot make
+the write fail on `index.lock`. The automatic refresh (§8) still waits for the executor to be
+idle, and the write commands are still disabled during a write.
+
 ### Progress and cancellation (S25)
 
 `Registry::run` stays synchronous and without callbacks. For slow commands there is
@@ -412,9 +451,9 @@ cancelled). This way the extension does not change the signature of the command 
   (e.g. in a `Mutex`) and request a frame, not draw.
 - **The UI** (`Executor`): for `remote.fetch` it calls `run_with` in the `Platform::spawn` job with
   a sink that stores the ticket's last `Progress` and calls `wake`, and keeps the ticket's `CancelToken`
-  for a "Cancel" button. The session stays locked by the job for the whole fetch
-  (§6): reads sent in the meantime wait for the end. The `MemoryBackend` finishes
-  immediately (fake events with the same shape).
+  for a "Cancel" button. The session stays locked by the job for the whole fetch: the reads sent
+  in the meantime run on the reader session (§6, "Reads beside a write"). The `MemoryBackend`
+  finishes immediately (fake events with the same shape).
 - **Cancellation**: the `CliBackend` checks the token every 50 ms while git runs; if it is
   cancelled it sends SIGTERM to the fetch's process group (git, ssh, `git-remote-http`,
   `index-pack`: git removes its own `.lock` files), after 3 seconds SIGKILL, and the command gives

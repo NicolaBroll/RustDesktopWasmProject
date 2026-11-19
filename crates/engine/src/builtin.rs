@@ -66,7 +66,8 @@ impl Registry {
             Read,
             repo_open,
         )
-        .takes_paths_outside_repo();
+        .takes_paths_outside_repo()
+        .needs_session();
         self.add(
             "repo.clone",
             "Clone a repository into an absent or empty folder and open it",
@@ -617,7 +618,8 @@ impl Registry {
             "{}",
             Read,
             edit::edit_history,
-        );
+        )
+        .needs_session();
     }
 }
 
@@ -1200,6 +1202,78 @@ mod tests {
         );
         let outside: Vec<_> = r.list().filter(|c| c.outside_repo).map(|c| c.id).collect();
         assert_eq!(outside, ["repo.clone", "repo.init", "repo.open"]);
+    }
+
+    /// The reads the UI runs on a [`Session::reader`] while the session is busy: each with
+    /// parameters that reach its handler. A new read is added here, or marked
+    /// [`CommandSpec::needs_session`](crate::CommandSpec::needs_session) if it reads the journal.
+    #[test]
+    fn the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there() {
+        fn refused(result: &Out) -> bool {
+            matches!(result, Err(EngineError::NotAllowed(m)) if m.key() == "engine-reader-session")
+        }
+        let (r, s) = opened();
+        let mut reader = s.reader().unwrap();
+        let reads = [
+            (
+                "branch.reset_preview",
+                json!({ "target": "HEAD", "mode": "hard" }),
+            ),
+            ("commit.show", json!({ "id": "HEAD" })),
+            ("conflict.show", json!({ "path": "b.txt" })),
+            ("diff.commit", json!({ "id": "HEAD" })),
+            ("diff.index", json!({})),
+            ("diff.range", json!({ "from": "HEAD", "to": "HEAD" })),
+            ("diff.worktree", json!({})),
+            ("file.blame", json!({ "path": "b.txt" })),
+            ("file.log", json!({ "path": "b.txt" })),
+            ("rebase.plan", json!({ "base": "HEAD" })),
+            ("remote.list", json!({})),
+            ("repo.lfs_paths", json!({ "paths": ["b.txt"] })),
+            ("repo.lfs_status", json!({})),
+            ("repo.log", json!({})),
+            ("repo.operation", json!({})),
+            ("repo.refs", json!({})),
+            ("repo.search", json!({ "query": "a" })),
+            ("repo.status", json!({})),
+            ("stash.list", json!({})),
+            ("submodule.list", json!({})),
+            ("worktree.list", json!({})),
+        ];
+        let readers: Vec<_> = r.list().filter(|c| c.reader).map(|c| c.id).collect();
+        assert_eq!(readers, reads.each_ref().map(|(id, _)| *id));
+        for (id, params) in reads {
+            let result = r.run(id, &mut reader, params);
+            assert!(!refused(&result), "{id}");
+            // `engine-params`: the registry could not read the parameters.
+            assert!(
+                !matches!(&result, Err(EngineError::InvalidParams { reason, .. }) if reason.key() == "engine-params"),
+                "{id} did not reach its handler: {result:?}"
+            );
+        }
+
+        // The others write, or read the session: refused on a reader, and nothing changes.
+        let session: Vec<_> = r
+            .list()
+            .filter(|c| !c.reader && !c.writes)
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(session, ["edit.history", "repo.open"]);
+        let status = reader.repo().unwrap().status().unwrap();
+        let refs = reader.repo().unwrap().refs().unwrap();
+        for (id, params) in [
+            ("edit.history", json!({})),
+            ("repo.open", json!({ "path": MemoryOpener::SAMPLE_PATH })),
+            ("index.stage", json!({ "paths": ["b.txt"] })),
+            ("commit.create", json!({ "message": "x" })),
+            ("branch.create", json!({ "name": "new" })),
+            ("stash.push", json!({})),
+            ("edit.undo", json!({})),
+        ] {
+            assert!(refused(&r.run(id, &mut reader, params)), "{id}");
+        }
+        assert_eq!(reader.repo().unwrap().status().unwrap(), status);
+        assert_eq!(reader.repo().unwrap().refs().unwrap(), refs);
     }
 
     #[test]

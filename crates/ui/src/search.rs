@@ -279,7 +279,7 @@ impl SearchBox {
     }
 
     /// The log was read again: the query searched so far runs again (not a content search:
-    /// it is slow and holds the session, its matches stay).
+    /// it is slow and the other reads wait behind it, its matches stay).
     pub fn refresh(&mut self) {
         let query = self.found.as_ref().map(|f| &f.query);
         self.rerun = query
@@ -664,8 +664,8 @@ impl Tab {
         }
     }
 
-    /// Cancels the content search running, if any (the repo or the tab changes: it would hold
-    /// the session).
+    /// Cancels the content search running, if any (the repo or the tab changes: nobody waits
+    /// for its matches any more).
     pub(crate) fn stop_search(&mut self) {
         if let Some(repo) = &mut self.repo
             && repo.search.stop()

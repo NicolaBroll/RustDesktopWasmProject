@@ -299,6 +299,30 @@ the UI thread when a result arrives.
   written outside `theme.rs` are grouped in one place per area (the diff `Style`, the graph
   palette). The per-frame `recent_view()` and `labels()` allocate a few short strings.
 
+### Q43 — Reads beside a write
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer` (reads now run during the writes)
+- **Goal:** point 3 of the review. A job holds the session for the whole command, so during a
+  fetch, a pull, a push or a commit with a slow hook every read waited: a clicked commit showed
+  no details and no diff until the end, also during the automatic fetch.
+- **Done when:** a read submitted during a write answers before the write ends; an answer read
+  before a write ended never reaches the UI after that write's own; the reads take no lock in
+  the repository; engine, UI and real-git tests; CI green.
+- **Done:** `Session::reader()`: a second session on the same repo that only reads
+  (`GitRead::reader`: the same repository for the `CliBackend`, a copy for the `MemoryBackend`);
+  `repo_mut`, `journal`, `repo_and_journal` and the opens refuse on it. `CommandSpec::reader`
+  marks the commands that may run there: the `Access::Read` ones except `repo.open` and
+  `edit.history` (`needs_session`). The `Executor` runs them on the reader, takes a new reader
+  after every command that writes or opens, and reads again an answer overtaken by a write
+  (`executor::Reading`; architecture §4 "Session" and §6 "Reads beside a write"). CLI and MCP
+  are unchanged. Tests: the catalog of the readers with parameters that reach every handler
+  (`the_pure_reads_run_on_a_reader_and_the_rest_is_refused_there`), three executor tests on
+  threads, and `crates/git/tests/reader.rs` (every read leaves `.git/index` byte for byte as it
+  was, free to lock it or with `index.lock` held; a reader writes nothing).
+- **Left as they are:** the reads still run one at a time among themselves (a content search
+  holds the others; it is cancelled when the query or the repo changes). The automatic refresh
+  waits for the executor to be idle and "Refresh" is off during a write: the write's answer
+  re-reads what it changed.
+
 ## Phase Q5 — UI tests
 
 ### Q50 — Smoke tests of the drawing code

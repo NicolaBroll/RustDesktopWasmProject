@@ -564,7 +564,7 @@ impl Tab {
 
     /// Opens `path` in this tab, in the background.
     fn open(&mut self, path: String) {
-        // A content search running would hold the session until it ends.
+        // A content search running is of the repo being left.
         self.stop_search();
         let params = params(RepoOpenParams { path: path.clone() });
         self.submit("repo.open", params, Request::Open);
@@ -631,7 +631,7 @@ impl Tab {
         match action {
             // The tabs, the folder dialog, clone, settings and credentials belong to `App`.
             Action::Tabs(_) | Action::Clone(_) | Action::Settings(_) | Action::Credentials(_) => {}
-            // During a write (a fetch can last) reads would wait in the queue.
+            // During a write: its answer re-reads what it changed.
             Action::Refresh => {
                 if self.executor.writing().is_none() {
                     self.auto.clear();

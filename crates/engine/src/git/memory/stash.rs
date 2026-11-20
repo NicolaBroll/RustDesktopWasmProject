@@ -201,8 +201,7 @@ impl MemoryBackend {
         }
         let id = self.new_commit_id(&parents, &message, &tree, time);
         let (name, email) = self
-            .identity
-            .clone()
+            .committer()
             .unwrap_or_else(|| ("Project".to_owned(), "stash@project.invalid".to_owned()));
         let who = Signature {
             name,

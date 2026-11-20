@@ -174,7 +174,7 @@ impl RepoView {
             Source::Sync => self.sync.failure_mut(),
             Source::Merge => self.merge.failure_mut(),
             Source::Checkout => self.branch.refusal_mut(),
-            Source::Fetch | Source::Remotes => None,
+            Source::Fetch | Source::Remotes | Source::Identity => None,
         }?;
         failure.retry.take().map(|retry| *retry)
     }

@@ -303,6 +303,7 @@ its function (or to a new file in `impl-docs/git/`, listed here).
 | `branch.create`, `branch.checkout`, `commit.checkout`, `branch.delete`, `branch.rename` | [git/branch.md](git/branch.md) |
 | `branch.reset`, `branch.reset_preview` | [git/reset.md](git/reset.md) |
 | `repo.clone`, `repo.init` | [git/clone.md](git/clone.md) |
+| `config.identity`, `config.set_identity` (`user.name` / `user.email`, local or global; no open repo needed) | [git/config.md](git/config.md) |
 | `submodule.list`, `submodule.update` | [git/submodules.md](git/submodules.md) |
 | `worktree.list`, `worktree.add`, `worktree.remove` (linked worktrees; not the `worktree.discard` / `clean` / `ignore` of the working tree files) | [git/worktrees.md](git/worktrees.md) |
 | `remote.fetch`, `remote.pull`, `remote.push` | [git/sync.md](git/sync.md) |

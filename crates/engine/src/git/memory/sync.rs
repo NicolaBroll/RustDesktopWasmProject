@@ -136,12 +136,9 @@ impl MemoryBackend {
         summary: String,
         body: String,
     ) -> Result<Oid, EngineError> {
-        let (name, email) = self.identity.clone().ok_or_else(|| EngineError::Git {
-            command: "merge".to_owned(),
-            stderr: "Committer identity unknown: no identity in the in-memory repo \
-                     (`MemoryBackend::set_identity`)"
-                .to_owned(),
-        })?;
+        let (name, email) = self
+            .committer()
+            .ok_or_else(|| Self::identity_unknown("merge", "Committer"))?;
         let now = Signature {
             name,
             email,

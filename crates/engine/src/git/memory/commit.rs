@@ -76,12 +76,9 @@ impl MemoryBackend {
             }
             _ => None,
         };
-        let (name, email) = self.identity.clone().ok_or_else(|| EngineError::Git {
-            command: "commit".to_owned(),
-            stderr: "Author identity unknown\n\n*** Please tell me who you are.\n\nfatal: \
-                     no identity in the in-memory repo (`MemoryBackend::set_identity`)"
-                .to_owned(),
-        })?;
+        let (name, email) = self
+            .committer()
+            .ok_or_else(|| Self::identity_unknown("commit", "Author"))?;
         let message = cleanup_message(&request.message);
         if message.is_empty() {
             return Err(EngineError::empty_commit_message());

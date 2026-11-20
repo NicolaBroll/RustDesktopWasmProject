@@ -1,0 +1,14 @@
+engine-config-nothing-given = give `name`, `email` or both (an empty string removes the key)
+engine-config-value-line = `{ $key }` cannot contain a line break or a NUL character
+engine-config-value-angle = `{ $key }` cannot contain `<` or `>`
+engine-config-value-crud = `{ $key }` is made only of spaces and punctuation that git strips: give a real value, or an empty string to remove the key
+engine-config-local-no-repo = no repository is open: open one to set the identity only for it, or use "scope": "global" for all your repositories; nothing was written
+engine-config-global-confined = the global git configuration cannot be written from here: it is outside the allowed root and every repository of the user reads it. Use "scope": "local" for the open repository; nothing was written
+engine-config-decided-elsewhere = nothing was written: `{ $key }` of the { $scope } configuration is set to “{ $value }” by `{ $file }`, not by the file this command writes, so a write there would not change what git reads. Edit `{ $file }` by hand; if it is included only for some repositories (`includeIf`), the main file can be set with no repository open
+engine-config-value = “{ $value }”
+engine-config-unset = not set
+engine-config-was = `{ $key }` was { $previous }
+engine-config-partial = { $error }. Already written before this failure: { $written }
+engine-config-reread-failed = the configuration was written, but it could not be read again: { $error }. Before the write: { $written }
+engine-config-still-set = `{ $key }` was written in the { $scope } configuration, but git reads “{ $value }” there (another entry or file sets it): check the configuration file by hand. Before the write: { $written }
+engine-config-not-read = `{ $key }` was written in the { $scope } configuration, but git reads no value for it there: check the configuration file by hand. Before the write: { $written }

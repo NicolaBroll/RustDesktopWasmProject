@@ -5,12 +5,18 @@
 //! [`Server::new`] and rejected if it escapes (also through symbolic links): repositories are
 //! opened only with the `open_repo` tool; `execute_command` refuses the commands with
 //! [`CommandSpec::outside_repo`](project_engine::CommandSpec::outside_repo) (`repo.open`,
-//! `repo.clone`, `repo.init`: their paths would not be confined).
+//! `repo.clone`, `repo.init`: their paths would not be confined). Command parameters are a JSON
+//! object (or absent): the positional array form serde would also accept is refused, so what a
+//! guard reads by name is what the command gets. The user's global git configuration is outside
+//! the root too: the session's opener never writes it (`Confined`).
 
 mod paths;
 
 use paths::Root;
-use project_engine::{Registry, RepoOpener, Session};
+use project_engine::{
+    CloneOutcome, CloneRequest, EngineError, GitBackend, Identity, IdentityFile, IdentityKey,
+    InitRequest, JobContext, Registry, RepoOpener, Session,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
@@ -24,6 +30,42 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
+/// The opener of the server's session: the given one, except that it never writes the user's
+/// global git configuration (`config.set_identity` with `"scope": "global"`), a file outside
+/// the root that every repository of the user reads. The refusal is here, below the command
+/// parameters, so no form of them reaches the file.
+struct Confined(Arc<dyn RepoOpener>);
+
+impl RepoOpener for Confined {
+    fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError> {
+        self.0.open(path)
+    }
+
+    fn clone_repo(
+        &self,
+        request: &CloneRequest,
+        job: &JobContext,
+    ) -> Result<CloneOutcome, EngineError> {
+        self.0.clone_repo(request, job)
+    }
+
+    fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError> {
+        self.0.init_repo(request)
+    }
+
+    fn identity(&self) -> Result<Identity, EngineError> {
+        self.0.identity()
+    }
+
+    fn global_identity_file(&self) -> Result<IdentityFile, EngineError> {
+        self.0.global_identity_file()
+    }
+
+    fn set_global_identity(&self, _: IdentityKey, _: Option<&str>) -> Result<(), EngineError> {
+        Err(project_engine::identity_global_confined())
+    }
+}
+
 pub struct Server {
     session: Session,
     registry: Registry,
@@ -34,7 +76,7 @@ impl Server {
     /// Server confined to `root`, opening repositories with `opener`.
     pub fn new(root: &Path, opener: Arc<dyn RepoOpener>) -> io::Result<Self> {
         Ok(Self {
-            session: Session::new(opener),
+            session: Session::new(Arc::new(Confined(opener))),
             registry: Registry::builtin(),
             root: Root::new(root)?,
         })
@@ -142,6 +184,26 @@ impl Server {
                  (to open a repository use the `open_repo` tool)"
             ));
         }
+        // Parameters are read by name. serde would also fill a command's parameters from an
+        // array, in field order: a check on `params["..."]` would not see them.
+        if !(params.is_object() || params.is_null()) {
+            return Err(format!(
+                "invalid arguments: `params` of `{id}` must be a JSON object with the parameters \
+                 by name"
+            ));
+        }
+        // The user's global git configuration is a file outside the root that every repository
+        // of the user reads: the identity is set here only for the open repository. This check
+        // answers the same whatever the file holds; the guarantee is the session's opener
+        // (`Confined`), which never writes that file.
+        if id == "config.set_identity" && params.get("scope") == Some(&json!("global")) {
+            return Err(
+                "`config.set_identity` with \"scope\": \"global\" is not available over MCP: \
+                 the user's global git configuration is outside the root (use \"scope\": \
+                 \"local\" to set the identity of the open repository)"
+                    .to_owned(),
+            );
+        }
         self.registry
             .run(&id, &mut self.session, params)
             .map_err(|e| e.to_string())
@@ -185,6 +247,8 @@ Commands with `writes: true` change the user's repository; most of them are undo
 for `\"confirm\": true`: pass it only if the user asked for it, and when the error gives a full \
 id pass it back unchanged in `\"expected\"`, so the command acts only on what the user saw. \
 Commands with `outside_repo: true` are not available here: open repositories with `open_repo`. \
+`config.set_identity` works here only with `\"scope\": \"local\"` (the user's global \
+configuration is outside the root). \
 Network commands (`remote.fetch`, `remote.pull`, `remote.push`, `remote.push_tag`, \
 `remote.delete_branch`, `remote.delete_tag`, `remote.add` with `fetch`) take a configured remote \
 by name, never a URL, and can be slow; what they change on the remote cannot be undone.";
@@ -653,6 +717,156 @@ mod tests {
         // `open_repo` itself still goes through `repo.open`.
         let r = call(&mut server, "open_repo", json!({"path": "repo"}));
         assert_eq!(r["isError"], false, "{r}");
+    }
+
+    #[test]
+    fn the_identity_is_read_anywhere_and_set_only_for_the_open_repo() {
+        let root = temp_root("identity");
+        let mut server = server(&root);
+        let identity = |server: &mut Server| {
+            let r = call(server, "execute_command", json!({"id": "config.identity"}));
+            assert_eq!(r["isError"], false, "{r}");
+            let text = r["content"][0]["text"].as_str().unwrap();
+            serde_json::from_str::<Value>(text).unwrap()
+        };
+        // Readable without an open repo.
+        assert_eq!(identity(&mut server)["global"]["name"], Value::Null);
+
+        let global = json!({"scope": "global", "name": "Glob", "email": "glob@example.com"});
+        for open in [false, true] {
+            if open {
+                let r = call(&mut server, "open_repo", json!({"path": "repo"}));
+                assert_eq!(r["isError"], false, "{r}");
+            }
+            let r = call(
+                &mut server,
+                "execute_command",
+                json!({"id": "config.set_identity", "params": global}),
+            );
+            assert_eq!(r["isError"], true, "{r}");
+            let text = r["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("not available over MCP"), "{text}");
+            assert!(text.contains("\"local\""), "{text}");
+            assert_eq!(identity(&mut server)["global"]["name"], Value::Null);
+        }
+
+        // Local, in the open repo, works.
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "config.set_identity", "params": {"scope": "local", "name": "Here"}}),
+        );
+        assert_eq!(r["isError"], false, "{r}");
+        let out = identity(&mut server);
+        assert_eq!(out["name"], json!({"value": "Here", "scope": "local"}));
+        assert_eq!(out["global"]["name"], Value::Null);
+    }
+
+    /// serde fills a struct from an array too: parameters in that form would get past every
+    /// check made on their names.
+    #[test]
+    fn parameters_must_be_an_object() {
+        let root = temp_root("array");
+        let mut server = server(&root);
+        let r = call(&mut server, "open_repo", json!({"path": "repo"}));
+        assert_eq!(r["isError"], false, "{r}");
+        for (id, params) in [
+            (
+                "config.set_identity",
+                json!(["global", "Glob", "g@example.com"]),
+            ),
+            ("config.set_identity", json!(["local", "Here"])),
+            ("repo.log", json!([0, 5])),
+            ("repo.clone", json!(["/", "/tmp/x"])),
+            ("repo.init", json!(["/tmp/x"])),
+            ("repo.open", json!(["/"])),
+            ("worktree.add", json!(["/tmp/x"])),
+            ("repo.status", json!("x")),
+            ("repo.status", json!(1)),
+            ("repo.status", json!(true)),
+        ] {
+            let r = call(
+                &mut server,
+                "execute_command",
+                json!({"id": id, "params": params}),
+            );
+            assert_eq!(r["isError"], true, "{id} {params}: {r}");
+            let text = r["content"][0]["text"].as_str().unwrap();
+            assert!(
+                text.contains("must be a JSON object") || text.contains("not available over MCP"),
+                "{id} {params}: {text}"
+            );
+        }
+        // Nothing of the above was run.
+        let r = call(
+            &mut server,
+            "execute_command",
+            json!({"id": "config.identity"}),
+        );
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let identity: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(identity["global"], json!({"name": null, "email": null}));
+        assert_ne!(identity["local"]["name"], "Here");
+        // An object and no parameters at all still work.
+        for params in [json!({}), Value::Null] {
+            let r = call(
+                &mut server,
+                "execute_command",
+                json!({"id": "repo.status", "params": params}),
+            );
+            assert_eq!(r["isError"], false, "{params}: {r}");
+        }
+    }
+
+    /// The guarantee below the parameters: whatever reaches the registry, the opener of the
+    /// session does not write the global configuration.
+    #[test]
+    fn the_session_opener_never_writes_the_global_configuration() {
+        use project_engine::{EngineError, IdentityKey, RepoOpener as _};
+        let inner = Arc::new(MemoryOpener::new());
+        let confined = Arc::new(Confined(inner.clone()));
+        let refused = |r: Result<Value, EngineError>| {
+            let err = r.unwrap_err();
+            assert!(
+                matches!(&err, EngineError::NotAllowed(m) if m.key() == "engine-config-global-confined"),
+                "{err}"
+            );
+            assert!(err.to_string().contains("\"scope\": \"local\""), "{err}");
+        };
+        refused(
+            confined
+                .set_global_identity(IdentityKey::Name, Some("Glob"))
+                .map(|()| Value::Null),
+        );
+        // Through the registry, without the checks of `execute_command`, in both forms.
+        let registry = Registry::builtin();
+        let mut session = Session::new(confined.clone());
+        for params in [
+            json!({"scope": "global", "name": "Glob", "email": "g@example.com"}),
+            json!(["global", "Glob", "g@example.com"]),
+            json!(["global", "", null]),
+        ] {
+            let result = registry.run("config.set_identity", &mut session, params.clone());
+            if params[1] == "" {
+                // Nothing to remove: nothing would be written, so nothing is refused.
+                assert_eq!(result.unwrap()["changed"], false);
+            } else {
+                refused(result);
+            }
+        }
+        assert_eq!(inner.identity().unwrap().global.name, None);
+        // Reads go through.
+        inner
+            .set_global_identity(IdentityKey::Name, Some("Glob"))
+            .unwrap();
+        assert_eq!(
+            confined.identity().unwrap().global.name.as_deref(),
+            Some("Glob")
+        );
+        assert_eq!(
+            confined.global_identity_file().unwrap().name.values,
+            ["Glob"]
+        );
     }
 
     #[test]

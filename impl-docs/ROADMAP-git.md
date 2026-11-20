@@ -1123,3 +1123,198 @@ file of its function in [git/](git/) before the code.
   manager, Remove… with confirmation), "New worktree from this branch…" in the branch menu and
   "+" in the section header (folder with Browse…, existing branch / new branch / detached commit;
   opened in a new tab).
+
+## Phase 9 — Reading diffs, recovery and investigation
+
+Analysis of 2026-11-19 (after 0.12.0), in order of usefulness over cost. Each command goes in the
+file of its function in [git/](git/) before the code. Not in this phase (to be analysed one by
+one): image preview, patches (`format-patch` / `am`), search in the content of the files
+(`git grep`), signature badges, external diff/merge tools, sparse checkout, hosting integration
+(pull requests, avatars), update check.
+
+### S65 — Git identity in the settings
+- [x] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Status:** engine, backend, CLI and MCP done (`config.identity`, `config.set_identity`,
+  `EngineError::is_missing_identity`, docs in [git/config.md](git/config.md)), with the findings
+  of the first safety review fixed: `previous` is the written file's own value (`previous_all`
+  when a key had several), a key decided by an included file is refused before writing, the
+  no-repo calls are detached from the repo around the current directory, MCP never writes the
+  global file and takes `params` only as an object. UI done (`crates/ui/src/identity.rs`,
+  Settings → "Git"): name and email for all repositories or only for the open one, read when
+  the section is shown and written only by "Save" (`config.set_identity` with the fields that
+  changed, the replaced values in the status bar), where git takes each value from, the local
+  value that hides the global one, the environment variables that win; "Set name and email…"
+  under the commit box, in the failure dialog of merge / cherry-pick / revert / pull and, for
+  the commands whose error stays elsewhere ("Continue", rebase, stash, tag), in a failure
+  dialog of its own; tried on Xvfb with an empty `HOME`. The review of the engine fixes and of
+  the UI is still to do.
+- **Goal:** without `user.name` / `user.email` the first commit fails and the app can only show
+  git's output. Add:
+  - `config.identity {}` (`Read`): for `name` and `email` the effective value and where it comes
+    from: `{"name": {"value": string | null, "scope": "local" | "global" | "system" | "other" |
+    null}, "email": {...}, "local": {"name", "email"}, "global": {"name", "email"}}`
+    (`git config --show-scope`, git 2.26+; `other` = worktree, command line, an `include`d file
+    keeps the scope of the file that includes it). Environment overrides (`GIT_AUTHOR_*`,
+    `GIT_COMMITTER_*`, `EMAIL`) are listed in `"env": [names]` because they win over the
+    configuration.
+  - `config.set_identity {"scope": "local" | "global", "name"?: string, "email"?: string}`
+    (`Access::Write`): one `git config --local|--global` per given key; an empty string unsets the
+    key (`--unset-all`, absent is not an error); a key not given is not touched. Refused: NUL,
+    newline, `<` or `>` in a value, a name made only of the characters git strips, both keys
+    absent. `local` needs an open repo; `global` writes the user's global file (never `--system`,
+    never `--file`) and works like `repo.clone` without an open repo. Result: the same object as
+    `config.identity` plus `"previous": {"name", "email"}` (the values of that scope before the
+    write) and `"changed": bool`; equal values write nothing. Not in the journal (no ref moves):
+    the previous values are in the result and in the status message.
+  - Docs in a new `impl-docs/git/config.md`, examples in `impl-docs/git/cli.md`, README.
+  - UI: Settings → new "Git" section: name, email, "For all repositories" (global) / "Only for
+    this repository" (local, shown with a repo open; says when a local value hides the global
+    one), note when an environment variable overrides them. When `commit.create` (and the other
+    commands that create a commit: merge, revert, cherry-pick, rebase, stash, annotated tag) fails
+    because the identity is missing (git's "Please tell me who you are" / "empty ident"), the
+    failure shows "Set name and email…" which opens that section; after saving, the commit dialog
+    is as it was (message kept).
+- **Done when:** integration tests (nothing set, global only, local over global, set local, set
+  global with `HOME` in a temporary folder — never the real one — unset, same value, invalid
+  values, `include`d file, env override listed, git 2.30) and on the `MemoryBackend`; UI tests of
+  the section and of the failure → settings path; tried on Xvfb with an empty `HOME`;
+  `safety-reviewer` review; CI green.
+
+### S66 — Diff options: whitespace and context
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer` (the line commands change)
+- **Goal:** a reindented file is unreadable and three lines of context are sometimes too few.
+  - `diff.worktree`, `diff.index`, `diff.commit`, `diff.range` get `"whitespace"?: "show"
+    (default) | "ignore_change" (`-b`) | "ignore_all" (`-w`)` and `"context"?: number (default 3,
+    0..=100000; the UI's "whole file" is the maximum)`. The result says which options made it
+    (`"options": {"whitespace", "context"}`).
+  - Partial staging/unstaging/discarding (`index.stage_lines`, `index.unstage_lines`,
+    `worktree.discard_lines`) work on the diff reread by the command: they get the same
+    `"context"?` (the digest is checked against the diff with that context; the patch applied is
+    equivalent whatever the context) and **refuse** a diff with whitespace ignored (the patch
+    would not describe the real change): `diff.*` with `whitespace != "show"` returns
+    `"partial": false` and no `digest`.
+  - Docs in `impl-docs/git/reading.md` and `impl-docs/git/stage.md`, `cli.md`, README.
+  - UI: an options menu in the diff header: "Ignore whitespace changes", "Ignore all
+    whitespace", context 3 / 10 / 25 / whole file; kept in the settings (per app, not per repo);
+    a visible mark in the header when whitespace is ignored, and the hunk/line buttons disabled
+    with the reason ("show whitespace to stage by line"). Side by side and unified both follow.
+- **Done when:** integration tests (indent-only change hidden by `-w` and by `-b`, context 0 and
+  whole file, stage/unstage/discard by line with context ≠ 3 give the same index as with 3,
+  line commands refused with whitespace ignored, CRLF file, git 2.30) and on the `MemoryBackend`;
+  UI tests of the menu, of the persistence and of the disabled buttons; `safety-reviewer` review;
+  CI green.
+
+### S67 — Syntax colouring in the diff
+- [ ] **Agent:** `egui-ui`
+- **Goal:** diffs are one colour per line kind. Colour the code by language (from the file name)
+  in the unified and side-by-side diff, in the blame and in the conflict editor's read-only
+  panes. Library chosen in the step after measuring (candidate: `syntect` with the pure-Rust
+  regex engine, no C dependency; binary size and start-up time measured before and after,
+  licences accepted by `cargo deny`). Rules: colouring never runs in the frame (background job
+  per file, rows shown plain until ready, as the word diff after Q-steps); each side is coloured
+  on its own sequence of lines (old lines and new lines), restarting at every hunk; files over a
+  size limit and lines over a length limit stay plain; added/removed backgrounds and the word
+  diff stay readable in both themes (contrast checked as in U65). Settings → General: "Colour
+  the code in diffs" (on by default).
+- **Done when:** unit tests (language from the name, a hunk coloured per side, limits, toggle);
+  no frame over budget on the 10 000-line diff of the Q-step benchmark; screenshots on Xvfb in
+  light and dark; CI green.
+
+### S68 — Backups: list, recover and clean up
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** `refs/project/backup/*` only grows and can be used only from the terminal. Add:
+  - `backup.list {}` (`Read`): `[{"ref", "id", "kind" (from the name: `amend`, `undo`, `redo`,
+    `index`, `pull`, `rebase`, `conflict`, `discard`, `worktree`, ...; unknown names → `other`),
+    "created" (the time in the name, otherwise the commit date), "subject", "held_elsewhere":
+    bool (reachable from a branch, a tag, a remote branch — not from a stash, another backup or
+    an index backup's parent: those are volatile, §7), "in_journal": bool}]`, newest first.
+  - `backup.delete {"refs": [string] | "older_than_days": number (>= 1), "confirm": true}`
+    (`Access::Write`): only refs under `refs/project/backup/`, each deleted with `update-ref -d
+    <ref> <expected id>` in one transaction. It is the one command that removes a backup instead
+    of saving one: `confirm` is always required, backups named by an entry of the session journal
+    (undo/redo still possible) are refused (`older_than_days` skips them and lists them in
+    `"kept"`), and the result lists every deleted ref with its id (the objects stay until git's
+    own gc, so the id still works for a while: said in the message, not promised).
+  - Recovering needs no new write command: `branch.create` at the backup's id, `commit.checkout`,
+    `diff.range`; index/discard/worktree backups (stash-like commits) are applied with
+    `stash.apply {"rev"}` if that command accepts a commit id, otherwise that parameter is added
+    here with the same rules as a stash.
+  - Docs in a new `impl-docs/git/backup.md` (and the §7 note about the "future cleanup"
+    updated), `cli.md`, README.
+  - UI: File menu → "Backups…": list (kind, date, subject, "already on a branch" badge), the
+    selected one shows its commit details and diff; "Create a branch here…", "Apply to the
+    working tree…" (stash-like kinds), "Delete…", "Delete those older than 30 days…" with the
+    count and the confirmation text saying what is lost for good.
+- **Done when:** integration tests (list of every kind the app creates, held elsewhere / only by
+  a stash, delete by name, by age, a ref outside the namespace refused, a ref moved since the
+  list refused, journal-referenced backup kept, git 2.30) and on the `MemoryBackend`; UI tests;
+  `safety-reviewer` review; CI green.
+
+### S69 — Files at a revision: browse, view, restore
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `safety-reviewer`
+- **Goal:** a commit shows only what it changed; there is no way to see the whole tree at that
+  point or to get one old file back. Add:
+  - `repo.tree {"rev": string, "path"?: path (a folder; without: the root)}` (`Read`): the
+    entries of that folder, folders first: `{"name", "path", "kind": "file" | "dir" | "symlink" |
+    "submodule", "mode", "size"?}` (`ls-tree -z --long`; one level per call).
+  - `file.show {"rev": string, "path": path, "max_bytes"?: number (1 MiB)}` (`Read`): `{"path",
+    "rev", "size", "binary": bool, "truncated": bool, "text"?: string, "lfs_pointer"?: bool}`
+    (`cat-file`; no smudge filters, no LFS download).
+  - `file.restore {"path": path, "rev": string, "confirm": true}` (`Access::Write`): writes the
+    file as it was at `rev` in the **working tree only** (the index is not touched: the user
+    stages it; `git restore --source=<rev> --worktree`, with the checkout filters). If the file
+    has local changes or is untracked, they are saved first with the `worktree.discard` backup
+    (no backup → no write). A path that does not exist at `rev` is refused (deleting is
+    `worktree.discard`/`clean`); refused for a folder, a submodule, an unmerged path and during
+    an operation in progress. Not in the journal (no ref moves); the backup is in the result.
+  - Docs in `impl-docs/git/reading.md` (read commands) and `impl-docs/git/discard.md`
+    (`file.restore`), `cli.md`, README.
+  - UI: commit menu → "Browse the files of this commit": a tree in place of the changed-file
+    list (lazy folders), a file opens read-only with "Blame" and "History" (S34) on it; in the
+    commit's file list and in the file history, "Restore this version…" and "Restore the version
+    before this commit…" (`rev^`; disabled for an added file), with the confirmation saying
+    whether local changes will be saved in a backup.
+- **Done when:** integration tests (tree of the root and of a folder, symlink and submodule
+  entries, binary and truncated file, non-UTF-8 name, restore of a clean file, with local
+  changes → backup, of a file deleted since, a path absent at `rev` refused, CRLF/filters, git
+  2.30) and on the `MemoryBackend`; UI tests; `safety-reviewer` review; CI green.
+
+### S70 — Bisect
+- [ ] **Agent:** `git-engine`, then `egui-ui`; `git-scenarios`; `safety-reviewer`
+- **Goal:** a bisect in progress is only recognised (and everything else refused). Drive it:
+  - `bisect.start {"bad"?: rev (HEAD), "good": [rev, ...] (at least one)}`, `bisect.mark
+    {"mark": "good" | "bad" | "skip", "rev"?: rev (HEAD)}`, `bisect.reset {}` (back to the branch
+    it started from), all `Access::Write` (they move HEAD); `bisect.status {}` (`Read`): `{"good":
+    [id], "bad": id | null, "skipped": [id], "current": id, "remaining": number, "steps": number,
+    "first_bad": id | null, "start": branch or id}`.
+  - Never `--force`: a checkout that would overwrite local changes is git's refusal, shown with
+    "Stash and retry" as for the other checkouts (U68). `start` is refused during any operation
+    in progress; `reset` puts back the starting branch and is refused if git cannot (changes in
+    the way). No journal entries (HEAD is detached on existing commits and `reset` restores it);
+    undo/redo stay refused during the bisect, as today.
+  - Docs in a new `impl-docs/git/bisect.md`, `cli.md`, README.
+  - UI: commit menu "Bisect: start here as bad…" / "…as good…" (dialog with the other end);
+    operation panel during the bisect: "N revisions left (about K steps)", "Good", "Bad", "Skip",
+    "End bisect"; the graph marks good, bad, skipped and the current commit; at the end the
+    first bad commit is selected and shown.
+- **Done when:** integration tests (linear history, a merge, skip, the first bad found, local
+  changes that block a step, reset from a detached start, a bisect started from the terminal
+  read correctly, git 2.30) and on the `MemoryBackend`; UI tests of the panel; `safety-reviewer`
+  review; CI green.
+
+### S71 — Reflog
+- [ ] **Agent:** `git-engine`, then `egui-ui`
+- **Goal:** a commit lost outside the app's journal (a reset from the terminal, a deleted
+  branch) can be found only from the terminal. Add `repo.reflog {"ref"?: string (HEAD), "skip"?:
+  number, "limit"?: number (200)}` (`Read`): `[{"selector" (`HEAD@{3}`), "id", "previous",
+  "date", "action" (`commit`, `checkout`, `reset`, `rebase`, `pull`, ...), "message", "subject",
+  "on_a_ref": bool}]` (`git log -g` with a NUL-separated format; a ref without a reflog → empty
+  list). No write command: the entries use `branch.create`, `commit.checkout` and `branch.reset`.
+  - Docs in `impl-docs/git/reading.md`, `cli.md`, README.
+  - UI: View menu → "Reflog…" (of HEAD; a branch's from the branch menu): list with date, action,
+    message, and a mark on the commits no ref holds any more; the selected entry shows the commit
+    details and diff; "Create a branch here…", "Check out this commit", "Reset «branch» to
+    here…".
+- **Done when:** integration tests (commit, checkout, reset, rebase and amend entries, a branch's
+  reflog, no reflog, paging, git 2.30) and on the `MemoryBackend` (which records the same moves);
+  UI tests; CI green.

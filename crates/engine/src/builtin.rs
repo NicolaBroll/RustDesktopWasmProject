@@ -4,6 +4,7 @@ pub(crate) mod branch;
 pub(crate) mod clean;
 pub(crate) mod clone;
 pub(crate) mod commit;
+pub(crate) mod config;
 pub(crate) mod conflict;
 pub(crate) mod discard;
 pub(crate) mod edit;
@@ -45,6 +46,7 @@ impl Registry {
     pub fn builtin() -> Self {
         let mut r = Self::default();
         r.add_repo();
+        r.add_config();
         r.add_changes();
         r.add_refs();
         r.add_remotes();
@@ -55,6 +57,24 @@ impl Registry {
         r.add_rebase();
         r.add_edit();
         r
+    }
+
+    /// The git identity (`impl-docs/git/config.md`): both work without an open repo.
+    fn add_config(&mut self) {
+        self.add(
+            "config.identity",
+            "Git identity: user.name and user.email, where they come from (also without an open repo)",
+            r#"{} -> {"name": {"value", "scope": "local" | "global" | "system" | "other" | null}, "email": {...}, "local": {"name", "email"}, "global": {"name", "email"}, "env": [names of the environment variables that take part]}"#,
+            Read,
+            config::config_identity,
+        );
+        self.add(
+            "config.set_identity",
+            "Set or remove user.name / user.email for this repository (local) or for all the user's repositories (global, also without an open repo)",
+            r#"{"scope": "local" | "global", "name"?: string, "email"?: string ("" removes the key, absent = not touched)} -> config.identity + {"previous": {"name", "email"}, "changed": bool}"#,
+            Write,
+            config::config_set_identity,
+        );
     }
 
     /// The repo, its history and the diffs.
@@ -1075,6 +1095,8 @@ mod tests {
                 "commit.create",
                 "commit.revert",
                 "commit.show",
+                "config.identity",
+                "config.set_identity",
                 "conflict.resolve",
                 "conflict.show",
                 "diff.commit",
@@ -1157,6 +1179,7 @@ mod tests {
                 "commit.cherry_pick",
                 "commit.create",
                 "commit.revert",
+                "config.set_identity",
                 "conflict.resolve",
                 "edit.redo",
                 "edit.undo",
@@ -1220,6 +1243,7 @@ mod tests {
                 json!({ "target": "HEAD", "mode": "hard" }),
             ),
             ("commit.show", json!({ "id": "HEAD" })),
+            ("config.identity", json!({})),
             ("conflict.show", json!({ "path": "b.txt" })),
             ("diff.commit", json!({ "id": "HEAD" })),
             ("diff.index", json!({})),

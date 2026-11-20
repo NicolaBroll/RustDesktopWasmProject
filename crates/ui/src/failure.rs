@@ -2,7 +2,9 @@
 //! (fetch, remote, pull and push, merge, checkout) shows a modal dialog with what happened,
 //! what to do and git's text. Data only, no egui: tested with unit tests. A refusal for local
 //! changes offers "Stash…", which hands the refused command to the stash dialog
-//! ([`crate::stash_retry`]).
+//! ([`crate::stash_retry`]); a commit that git could not create without a name and an email
+//! offers "Set name and email…", which opens the "Git" section of the settings
+//! ([`crate::identity`]).
 //!
 //! Each area keeps its own [`Failure`]; here they become one dialog at a time. With two
 //! failures waiting, the one that came first stays on screen until it is dismissed, then the
@@ -24,16 +26,20 @@ pub(crate) enum Source {
     Merge,
     /// A checkout refused for local changes.
     Checkout,
+    /// A command stopped because git has no name or email, whose own error is not shown in
+    /// one of the dialogs above ([`crate::identity::failure`]).
+    Identity,
 }
 
 impl Source {
     /// The order of failures that arrive together.
-    const ALL: [Source; 5] = [
+    const ALL: [Source; 6] = [
         Source::Fetch,
         Source::Remotes,
         Source::Sync,
         Source::Merge,
         Source::Checkout,
+        Source::Identity,
     ];
 
     /// The action that closes the failure of this area.
@@ -44,6 +50,7 @@ impl Source {
             Source::Sync => Action::Sync(sync::Action::Dismiss),
             Source::Merge => Action::Merge(merge::Action::DismissError),
             Source::Checkout => Action::Branch(branch::Action::DismissRefusal),
+            Source::Identity => Action::DismissIdentity,
         }
     }
 }
@@ -65,7 +72,14 @@ impl RepoView {
             },
             Source::Merge => self.merge.failure(),
             Source::Checkout => self.branch.refusal(),
+            Source::Identity => self.identity.as_ref(),
         }
+    }
+
+    /// True if a failure waiting already offers "Set name and email…".
+    pub(crate) fn offers_identity(&self) -> bool {
+        let offers = |source: &Source| self.failure_of(*source).is_some_and(|f| f.identity);
+        Source::ALL.iter().any(offers)
     }
 
     /// The failure dialog to show, with the area that closes it: the oldest one waiting. One at

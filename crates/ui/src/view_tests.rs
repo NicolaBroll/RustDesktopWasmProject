@@ -1966,3 +1966,302 @@ fn a_toolbar_without_room_moves_its_last_buttons_into_a_menu() {
     let push = painted.iter().find(|p| p.text.starts_with("Push "));
     assert_eq!(push.map(|p| p.text.as_str()), Some("Push ↑1"), "the count");
 }
+
+/// The repo `repo` with its own "Ada", for the user "A. L." whose git has `env` set.
+fn identities(mut repo: MemoryBackend, env: &[&str]) -> MemoryOpener {
+    use project_engine::{IdentityKey, RepoOpener as _};
+    repo.set_identity("Ada", "ada@example.com");
+    let mut opener = MemoryOpener::new();
+    opener.insert(PATH, repo);
+    let set = |key, value| opener.set_global_identity(key, Some(value)).unwrap();
+    set(IdentityKey::Name, "A. L.");
+    set(IdentityKey::Email, "al@example.com");
+    for name in env {
+        opener.set_identity_env(name, "x");
+    }
+    opener
+}
+
+/// The settings open on "Git", read.
+fn git_section(opener: MemoryOpener, repo: Option<&str>) -> (Screen, Vec<Painted>) {
+    use crate::settings::{Action as S, Section};
+    let mut screen = Screen::with(opener, repo);
+    screen.frames(3);
+    screen.act(A::Settings(S::Open));
+    let painted = screen.shows(
+        A::Settings(S::Section(Section::Git)),
+        &["Name and email of your commits", "For all repositories"],
+    );
+    (screen, painted)
+}
+
+fn typed(text: &str) -> Vec<egui::Event> {
+    vec![egui::Event::Text(text.to_owned())]
+}
+
+/// S65: the "Git" section shows the repo's own values, where git takes each one from, the
+/// values they hide and the environment that wins; "Save" writes the chosen scope.
+#[test]
+fn the_git_section_of_the_settings() {
+    use crate::identity::Action as I;
+    use crate::settings::Action as S;
+    use project_engine::IdentityKey;
+    let opener = identities(MemoryBackend::sample(), &["GIT_COMMITTER_NAME"]);
+    let (mut screen, painted) = git_section(opener, Some(PATH));
+    assert_shows(
+        &painted,
+        &[
+            "Only for this repository",
+            "Ada",
+            "ada@example.com",
+            "What git uses in “repo”",
+            "(set for this repository)",
+            "This repository has its own name: the one for all repositories (“A. L.”) is not \
+             used here.",
+            "This repository has its own email",
+            "The environment variable GIT_COMMITTER_NAME is set where the app was started",
+            "Save",
+        ],
+    );
+    assert!(!screen.app.identity.can_save());
+
+    // The other scope: its values in the fields, nothing written.
+    let painted = screen.click_on(&painted, "For all repositories", Primary);
+    assert_shows(&painted, &["A. L.", "al@example.com"]);
+    let email = "lovelace@example.com";
+    screen.act(A::Settings(S::Identity(I::Email(email.to_owned()))));
+    let painted = screen.frames(1);
+    assert_eq!(&*screen.tab().notice, "", "nothing saved yet");
+    let painted = screen.click_on(&painted, "Save", Primary);
+    let saved = "Name and email saved for all repositories. Before: name “A. L.”, email \
+                 “al@example.com”.";
+    assert_shows(&painted, &[saved, email]);
+    assert_eq!(&*screen.tab().notice, saved, "in the status bar too");
+    let form = &screen.app.identity;
+    let global = &form.identity().expect("read").global;
+    assert_eq!(global.email.as_deref(), Some(email));
+    assert_eq!(global.name.as_deref(), Some("A. L."));
+    assert_eq!(form.text(IdentityKey::Name), "A. L.");
+    assert!(!form.can_save());
+
+    // A narrow window: the page wraps, nothing goes beyond the edge.
+    screen.size = egui::vec2(560.0, 640.0);
+    let painted = screen.shows_frames(&["What git uses in “repo”", "GIT_COMMITTER_NAME"]);
+    let of_the_page = |p: &&Painted| p.text.contains("repositor") || p.text.contains("variable");
+    let page: Vec<_> = painted.iter().filter(of_the_page).collect();
+    assert!(page.len() >= 6, "{page:?}");
+    for p in page {
+        let inside = p.pos.x >= 0.0 && p.pos.x + p.width <= screen.size.x;
+        assert!(inside, "beyond the edge: {p:?}");
+    }
+    // A low one (the smallest the app allows): the page scrolls, "Close" stays in view.
+    screen.size = egui::vec2(640.0, 400.0);
+    let painted = screen.shows_frames(&["Name and email of your commits", "Close"]);
+    let close = painted.iter().rfind(|p| p.text == "Close").expect("Close");
+    assert!(close.pos.y + 20.0 <= screen.size.y, "{close:?}");
+    let title = painted
+        .iter()
+        .rfind(|p| p.text == "Settings")
+        .expect("the title");
+    assert!(title.pos.y >= 0.0, "{title:?}");
+    let last = |p: &Painted| p.text.contains("GIT_COMMITTER_NAME");
+    assert!(
+        !painted.iter().any(last),
+        "the end of the page is scrolled away"
+    );
+
+    // Esc closes the window; opened again it reads again and what was typed is gone.
+    screen.act(A::Settings(S::Identity(I::Name("typed".to_owned()))));
+    screen.key(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!screen.app.settings_box.open);
+    screen.act(A::Settings(S::Open));
+    let form = &screen.app.identity;
+    assert_eq!(form.text(IdentityKey::Name), "Ada", "the repo's own again");
+}
+
+/// S65: a write that fails says why under the button and in the status bar, and the fields
+/// keep what was typed.
+#[test]
+fn a_git_identity_that_cannot_be_saved() {
+    use crate::identity::Action as I;
+    use crate::settings::Action as S;
+    use project_engine::{IdentityKey, IdentityScope};
+    let opener = identities(MemoryBackend::sample(), &[]);
+    opener.fail_identity_writes(IdentityKey::Name, "error: could not lock config file");
+    let (mut screen, _) = git_section(opener, Some(PATH));
+    screen.act(A::Settings(S::Identity(I::Scope(IdentityScope::Global))));
+    screen.act(A::Settings(S::Identity(I::Name("Grace Hopper".to_owned()))));
+    let painted = screen.frames(1);
+    let painted = screen.click_on(&painted, "Save", Primary);
+    assert_shows(
+        &painted,
+        &[
+            "Name and email not saved:",
+            "could not lock config file",
+            "Grace Hopper",
+        ],
+    );
+    assert!(screen.tab().error.contains("could not lock config file"));
+    let form = &screen.app.identity;
+    assert_eq!(form.text(IdentityKey::Name), "Grace Hopper");
+    assert!(form.can_save(), "it can be tried again");
+    assert_eq!(
+        form.identity().unwrap().global.name.as_deref(),
+        Some("A. L.")
+    );
+}
+
+/// S65: without a repo there is no "this repository": only the values for all repositories.
+#[test]
+fn the_git_section_without_a_repo() {
+    use project_engine::IdentityScope;
+    let mut opener = MemoryOpener::new();
+    opener.set_identity_env("EMAIL", "env@example.com");
+    opener.insert(PATH, MemoryBackend::sample());
+    let (mut screen, painted) = git_section(opener, None);
+    assert_shows(
+        &painted,
+        &[
+            "What git uses",
+            "not set",
+            "Your name",
+            "you@example.com",
+            "No email is configured: git takes it from the EMAIL environment variable.",
+        ],
+    );
+    let local = |p: &Painted| p.text.contains("Only for this repository");
+    assert!(!painted.iter().any(local), "no repo to choose");
+    assert_eq!(screen.app.identity.scope(), IdentityScope::Global);
+    // The frames that follow send nothing: the values were read once.
+    screen.frames(5);
+    assert!(!screen.tab().executor.is_busy());
+    assert!(!screen.app.identity.is_reading());
+}
+
+/// S65: a commit that git refuses for a missing identity offers "Set name and email…" under
+/// the message box; the settings open on "Git" with the keyboard in the name, Enter saves,
+/// and the commit box is as it was: the message kept, the staged files untouched, no commit.
+#[test]
+fn a_commit_without_an_identity_offers_the_settings() {
+    use crate::commit;
+    use project_engine::IdentityKey;
+    let mut repo = MemoryBackend::sample();
+    repo.clear_identity();
+    let mut screen = Screen::open(repo);
+    let head = screen.repo().head.target();
+    screen.act(A::SelectWorktree);
+    fn draft(screen: &mut Screen) -> &mut commit::CommitDraft {
+        &mut screen.app.tabs[0].repo.as_mut().unwrap().commit.draft
+    }
+    draft(&mut screen).subject = "Fix the guide".to_owned();
+    let painted = screen.shows(
+        A::Commit(commit::Action::Commit),
+        &[
+            "Git has no name or email for you, so it did not create the commit.",
+            "Please tell me who you are",
+            "Set name and email…",
+            "Staged (2)",
+        ],
+    );
+    assert!(screen.repo().commit.error().is_some_and(|e| e.identity));
+
+    let painted = screen.click_on(&painted, "Set name and email…", Primary);
+    assert_shows(
+        &painted,
+        &[
+            "Settings",
+            "Name and email of your commits",
+            "For all repositories",
+        ],
+    );
+    assert!(screen.app.settings_box.open);
+    // The keyboard is in the name: typing goes there, Tab to the email, Enter saves.
+    screen.frame(typed("Grace"));
+    screen.key(egui::Key::Tab, egui::Modifiers::NONE);
+    screen.frame(typed("grace@example.com"));
+    screen.frames(2);
+    let form = &screen.app.identity;
+    let texts = (form.text(IdentityKey::Name), form.text(IdentityKey::Email));
+    assert_eq!(texts, ("Grace", "grace@example.com"));
+    assert_eq!(
+        draft(&mut screen).subject,
+        "Fix the guide",
+        "not typed over"
+    );
+    let painted = screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_shows(
+        &painted,
+        &["Name and email saved for all repositories. Before: name not set, email not set."],
+    );
+    assert!(
+        screen.app.settings_box.open,
+        "Enter saved, it did not close"
+    );
+
+    // Closed: the commit box as it was, without the error; nothing was committed.
+    let painted = screen.key(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!screen.app.settings_box.open);
+    assert_shows(&painted, &["Fix the guide", "Staged (2)"]);
+    assert!(!painted.iter().any(|p| p.text == "Set name and email…"));
+    assert!(screen.repo().commit.error().is_none());
+    assert_eq!(screen.repo().head.target(), head, "no commit on its own");
+    // Now the same commit goes through.
+    screen.act(A::Commit(commit::Action::Commit));
+    assert_ne!(screen.repo().head.target(), head);
+    assert_eq!(draft(&mut screen).subject, "");
+}
+
+/// S65: a merge stopped by a missing identity offers the settings in its failure dialog (the
+/// default button), which closes; the commands whose error stays elsewhere get a dialog too.
+#[test]
+fn a_failure_for_a_missing_identity_opens_the_settings() {
+    use crate::failure::Source;
+    use crate::merge::Action as M;
+    // `main` and `other` have diverged, and only `other` changed `a.txt`: a merge commit.
+    let mut repo = diverging();
+    repo.set_changes(oid(2), Vec::new());
+    repo.clear_identity();
+    let mut screen = Screen::open(repo);
+    let painted = screen.shows(
+        A::Merge(M::Merge {
+            rev: "other".to_owned(),
+            what: "other".to_owned(),
+        }),
+        &[
+            "Merge failed",
+            "failed: git has no name or email for you, so it could not create the commit.",
+            "Please tell me who you are",
+            "Set name and email…",
+            "Close",
+        ],
+    );
+    let failure = screen
+        .repo()
+        .failure()
+        .map(|(source, f)| (source, f.identity));
+    assert_eq!(
+        failure,
+        Some((Source::Merge, true)),
+        "one dialog, the merge's own"
+    );
+    let painted = screen.click_on(&painted, "Set name and email…", Primary);
+    assert_shows(&painted, &["Name and email of your commits"]);
+    assert!(screen.repo().failure().is_none(), "the failure closed");
+    screen.key(egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!screen.app.settings_box.open);
+
+    // The "Continue" of an operation, a tag, a stash: their own dialog over what is open,
+    // Enter on its default button.
+    let generation = screen.tab().generation;
+    let git = "Committer identity unknown\n\n*** Please tell me who you are.";
+    screen.app.tabs[0].offer_identity(generation, Some(git.to_owned()));
+    screen.shows_frames(&[
+        "Git needs your name and email",
+        "it could not create the commit",
+        "Please tell me who you are",
+        "Set name and email…",
+    ]);
+    let painted = screen.key(egui::Key::Enter, egui::Modifiers::NONE);
+    assert_shows(&painted, &["Name and email of your commits"]);
+    assert!(screen.app.settings_box.open && screen.repo().failure().is_none());
+}

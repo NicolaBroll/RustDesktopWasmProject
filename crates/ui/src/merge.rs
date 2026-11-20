@@ -744,10 +744,18 @@ impl MergeBox {
                     kind,
                     Some(ErrorKind::NotAllowed | ErrorKind::InvalidParams | ErrorKind::UnknownRev)
                 );
+                // Git has no name or email for the commit: said in a sentence (git's own text
+                // is under it) with "Set name and email…".
+                let identity = crate::identity::missing(&e);
                 let (title, explanation) = if refused {
                     (
                         tr!("merge-refused-title", title = title),
                         tr!("merge-refused", what = &what, error = &e),
+                    )
+                } else if identity {
+                    (
+                        tr!("merge-failed-title", title = title),
+                        tr!("merge-failed-identity", what = &what),
                     )
                 } else {
                     (
@@ -762,6 +770,7 @@ impl MergeBox {
                     git,
                     stash: false,
                     retry: None,
+                    identity,
                 });
                 Received::Failed {
                     message: explanation,

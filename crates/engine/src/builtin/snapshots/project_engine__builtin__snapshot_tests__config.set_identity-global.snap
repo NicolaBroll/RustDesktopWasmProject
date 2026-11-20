@@ -1,0 +1,30 @@
+---
+source: crates/engine/src/builtin/snapshot_tests.rs
+expression: out
+---
+{
+  "changed": true,
+  "email": {
+    "scope": "global",
+    "value": "glob@example.com"
+  },
+  "env": [
+    "GIT_AUTHOR_NAME"
+  ],
+  "global": {
+    "email": "glob@example.com",
+    "name": "Glob"
+  },
+  "local": {
+    "email": null,
+    "name": null
+  },
+  "name": {
+    "scope": "global",
+    "value": "Glob"
+  },
+  "previous": {
+    "email": null,
+    "name": null
+  }
+}

@@ -62,6 +62,9 @@ pub struct Failure {
     /// The refused command, which the stash dialog opened from here can send again after the
     /// stash ("Stash and …", U68). It lives and dies with this failure.
     pub retry: Option<Box<Retry>>,
+    /// Git has no name or email to create the commit with: the dialog offers "Set name and
+    /// email…", which opens the "Git" section of the settings (S65, [`crate::identity`]).
+    pub identity: bool,
 }
 
 /// The fetch: the one in progress and the last error to explain.
@@ -223,6 +226,7 @@ impl FetchBox {
                     git: detail,
                     stash: false,
                     retry: None,
+                    identity: false,
                 });
                 // Git may have updated some remote branch before failing.
                 Received::Failed {
@@ -273,6 +277,7 @@ pub fn auth_failure(who: &str, detail: Option<String>) -> Failure {
         git: detail,
         stash: false,
         retry: None,
+        identity: false,
     }
 }
 
@@ -288,6 +293,7 @@ pub fn unreachable_failure(who: &str, detail: Option<String>) -> Failure {
         git: detail,
         stash: false,
         retry: None,
+        identity: false,
     }
 }
 
@@ -303,6 +309,7 @@ pub fn local_changes_failure(title: String, files: Option<&str>) -> Failure {
         git: None,
         stash: true,
         retry: None,
+        identity: false,
     }
 }
 

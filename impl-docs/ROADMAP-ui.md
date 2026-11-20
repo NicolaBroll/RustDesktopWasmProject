@@ -559,7 +559,7 @@ like the "Merge in progress" panel; no floating `egui::Window` for errors. Scree
 
 ### Left for later (they need new engine commands or `Platform` capabilities)
 
-Discard a hunk / selected lines (new write command with backup), "Add to .gitignore", git
-identity (`user.name` / `user.email`) in the settings, diff options (ignore whitespace, context
-lines), "Open file" / "Show in folder" (a `Platform` capability). Each goes in
-[ROADMAP-git.md](ROADMAP-git.md) with its contract before the UI.
+Done since: discard a hunk / selected lines (S56), "Add to .gitignore" (S57), "Open file" /
+"Show in folder" (S60). Still open, each with its contract in
+[ROADMAP-git.md](ROADMAP-git.md): git identity (`user.name` / `user.email`) in the settings
+(S65), diff options (ignore whitespace, context lines; S66).

@@ -103,6 +103,12 @@ pub use git::{
     CommitGraphState, commit_graph_disabled, commit_graph_replaced, commit_graph_shallow,
 };
 pub use git::{
+    ConfigScope, GitConfig, IDENTITY_ENV, Identity, IdentityElsewhere, IdentityFile,
+    IdentityFileKey, IdentityKey, IdentityPair, IdentityScope, IdentityValue, PreviousAll,
+    SetIdentityParams, SetIdentityResult, identity_decided_elsewhere, identity_global_confined,
+    identity_local_without_repo, is_missing_identity,
+};
+pub use git::{
     ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
     check_conflict, check_digest, marker_size, worktree_digest,
 };
@@ -341,6 +347,21 @@ impl EngineError {
             "engine-unmerged-in-folder",
             files = quoted_list(paths)
         ))
+    }
+
+    /// Whether the error says that git could not create a commit (or an annotated tag, a
+    /// stash) because it has no usable `user.name` / `user.email`
+    /// ([`is_missing_identity`] on the English text of the error, which contains git's):
+    /// `config.set_identity` is the fix. The UI offers its identity settings on it.
+    pub fn is_missing_identity(&self) -> bool {
+        match self {
+            EngineError::Git { stderr, .. } => is_missing_identity(stderr),
+            EngineError::InvalidParams { .. }
+            | EngineError::NoRepo
+            | EngineError::Cancelled { .. }
+            | EngineError::ConfirmRequired { .. } => false,
+            other => is_missing_identity(&other.to_string()),
+        }
     }
 
     /// [`EngineError::InvalidParams`] of `commit.create` for a message that git's cleanup

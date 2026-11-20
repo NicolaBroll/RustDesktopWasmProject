@@ -68,6 +68,8 @@ const ASKPASS_VARS: &[&str] = &[ASKPASS_ENV];
 pub(crate) struct Git {
     program: OsString,
     env: Vec<(OsString, OsString)>,
+    /// Inherited variables git must not see ([`Git::unset_env`]).
+    removed: Vec<OsString>,
     askpass: Option<Askpass>,
 }
 
@@ -76,12 +78,30 @@ impl Git {
         Self {
             program: program.into(),
             env: Vec::new(),
+            removed: Vec::new(),
             askpass: None,
         }
     }
 
     pub(crate) fn set_env(&mut self, key: OsString, value: OsString) {
         self.env.push((key, value));
+    }
+
+    /// git does not inherit `key` from the process environment (a value given with
+    /// [`Git::set_env`] still applies).
+    pub(crate) fn unset_env(&mut self, key: OsString) {
+        self.removed.push(key);
+    }
+
+    /// The value of `key` as git will see it: added with [`Git::set_env`], or inherited unless
+    /// removed with [`Git::unset_env`]; `None` if not set. For the variables [`Git::command`]
+    /// leaves alone (not the ones it always removes or sets).
+    pub(crate) fn env_var(&self, key: &str) -> Option<OsString> {
+        match self.env.iter().rev().find(|(k, _)| k == key) {
+            Some((_, value)) => Some(value.clone()),
+            None if self.removed.iter().any(|k| k == key) => None,
+            None => std::env::var_os(key),
+        }
     }
 
     /// The network commands ([`Git::run_network`]) ask `prompter` for credentials, with
@@ -132,6 +152,9 @@ impl Git {
             cmd.env_remove(key);
         }
         for key in inherited_config_vars(std::env::vars_os().map(|(k, _)| k)) {
+            cmd.env_remove(key);
+        }
+        for key in &self.removed {
             cmd.env_remove(key);
         }
         for (key, value) in &self.env {
@@ -450,10 +473,7 @@ impl Git {
 
     /// Whether `key` is set, not empty, for git: added with [`Git::set_env`] or inherited.
     fn env_set(&self, key: &str) -> bool {
-        match self.env.iter().rev().find(|(k, _)| k == key) {
-            Some((_, value)) => !value.is_empty(),
-            None => std::env::var_os(key).is_some_and(|v| !v.is_empty()),
-        }
+        self.env_var(key).is_some_and(|v| !v.is_empty())
     }
 
     /// Whether `core.askPass` is configured, not empty, in any scope for the repo in `dir`.
@@ -810,6 +830,26 @@ mod tests {
         {
             assert_eq!(value(key), Some(None), "{key}");
         }
+    }
+
+    #[test]
+    fn removed_and_added_variables() {
+        let mut git = Git::new("git");
+        git.unset_env("PATH".into());
+        git.unset_env("EMAIL".into());
+        git.set_env("EMAIL".into(), "a@example.com".into());
+        git.set_env("GIT_AUTHOR_NAME".into(), "".into());
+        let cmd = git.command(None, &["status"], &[]);
+        let envs: Vec<_> = cmd.get_envs().collect();
+        let value = |key: &str| envs.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
+        assert_eq!(value("PATH"), Some(None), "not inherited");
+        assert_eq!(value("EMAIL"), Some(Some("a@example.com".as_ref())));
+        // What git will see: set here (even empty), removed, or inherited.
+        assert_eq!(git.env_var("EMAIL"), Some("a@example.com".into()));
+        assert_eq!(git.env_var("GIT_AUTHOR_NAME"), Some("".into()));
+        assert_eq!(git.env_var("PATH"), None);
+        assert_eq!(Git::new("git").env_var("PATH"), std::env::var_os("PATH"));
+        assert!(git.env_set("EMAIL") && !git.env_set("GIT_AUTHOR_NAME") && !git.env_set("PATH"));
     }
 
     #[test]

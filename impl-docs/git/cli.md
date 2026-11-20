@@ -75,6 +75,18 @@ cargo run -p project-cli -- --repo . run --cmd 'branch.reset={"target":"HEAD~1",
 cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/rust-lang/log.git","path":"target/log"}' --cmd 'repo.log={"limit":3}'
 cargo run -p project-cli -- run --cmd 'repo.clone={"url":"file:///path/to/repo","path":"target/shallow","branch":"main","depth":1}'
 cargo run -p project-cli -- run --cmd 'repo.init={"path":"target/new-repo","branch":"main"}' --cmd repo.status
+# git identity (user.name / user.email): where the values come from (local, global, system, other)
+# and the environment variables that override them; no --repo needed for the global file
+cargo run -p project-cli -- run --cmd config.identity
+cargo run -p project-cli -- --repo . run --cmd config.identity
+# set it for all the user's repositories (writes ~/.gitconfig: never the system file) or only for
+# this one; "" removes a key, a key not given is not touched; the result has the values the file
+# held before ("previous", and "previous_all" if a key had several) and "changed": false when
+# nothing had to be written; a key that an included file decides is refused, naming that file;
+# not undone by edit.undo
+cargo run -p project-cli -- run --cmd 'config.set_identity={"scope":"global","name":"Ada Lovelace","email":"ada@example.com"}'
+cargo run -p project-cli -- --repo . run --cmd 'config.set_identity={"scope":"local","email":"ada@work.example"}'
+cargo run -p project-cli -- --repo . run --cmd 'config.set_identity={"scope":"local","email":""}' --cmd config.identity
 # clone with its submodules, then list them
 cargo run -p project-cli -- run --cmd 'repo.clone={"url":"https://github.com/me/app.git","path":"target/app","submodules":true}' --cmd submodule.list
 # submodules: state, update (the recorded commit; refused per submodule with local changes, untracked

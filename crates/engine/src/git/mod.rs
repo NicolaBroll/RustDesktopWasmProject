@@ -9,6 +9,7 @@ mod branch;
 mod clean;
 mod clone;
 mod commit;
+mod config;
 mod conflict;
 mod discard;
 mod discard_lines;
@@ -66,6 +67,12 @@ pub use commit::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use commit::{cleanup_message, split_message};
+pub use config::{
+    ConfigScope, IDENTITY_ENV, Identity, IdentityElsewhere, IdentityFile, IdentityFileKey,
+    IdentityKey, IdentityPair, IdentityScope, IdentityValue, PreviousAll, SetIdentityParams,
+    SetIdentityResult, identity_decided_elsewhere, identity_global_confined,
+    identity_local_without_repo, is_missing_identity,
+};
 pub use conflict::{
     ConflictResolution, ConflictResolved, ConflictVersions, DEFAULT_MARKER_SIZE, VersionText,
     check_conflict, check_digest, marker_size, worktree_digest,
@@ -951,6 +958,33 @@ pub trait GitMaintenance {
     fn write_commit_graph(&mut self, job: &JobContext) -> Result<(), EngineError>;
 }
 
+/// The user's configuration: the identity (`impl-docs/git/config.md`). Part of [`GitBackend`].
+pub trait GitConfig {
+    /// `config.identity` for this repo: `user.name` and `user.email` as git reads them here
+    /// (all scopes, `include`s followed, the last value wins), the values of the local and of
+    /// the global scope, and the environment variables that take part ([`Identity`]). A read:
+    /// no lock, nothing written.
+    fn identity(&self) -> Result<Identity, EngineError>;
+
+    /// The file `config.set_identity` would write for `scope`, read **from this repo**: the
+    /// values the file itself holds (no `include`s: [`IdentityFileKey::values`]) and, per key,
+    /// the other file that decides what git reads in that scope here, if any
+    /// ([`IdentityFileKey::elsewhere`]; for the global scope a conditional `includeIf` that
+    /// applies to this repo counts). A read: no lock, nothing written.
+    fn identity_file(&self, scope: IdentityScope) -> Result<IdentityFile, EngineError>;
+
+    /// Writes one key of the identity in the repo's own configuration (`git config --local`):
+    /// `Some(value)` sets it (replacing every value the file has for the key), `None` removes
+    /// it (not there: not an error). The value is already checked
+    /// ([`SetIdentityParams::check`]). No ref, index or worktree changes; the caller re-reads
+    /// with [`GitConfig::identity`] and checks the result.
+    fn set_local_identity(
+        &mut self,
+        key: IdentityKey,
+        value: Option<&str>,
+    ) -> Result<(), EngineError>;
+}
+
 /// Submodules (`impl-docs/git/submodules.md`). Part of [`GitBackend`].
 pub trait GitSubmodules {
     /// The submodules of the repo (the gitlinks of the index, in path order) with their state.
@@ -989,7 +1023,7 @@ pub trait GitWorktrees {
 }
 
 /// An open repository: the union of the traits by area ([`GitRead`], [`GitIndex`], [`GitRefs`],
-/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`], [`GitSubmodules`], [`GitWorktrees`]). Every type that
+/// [`GitRemotes`], [`GitStash`], [`GitOperations`], [`GitMaintenance`], [`GitConfig`], [`GitSubmodules`], [`GitWorktrees`]). Every type that
 /// implements all of them is a `GitBackend` (blanket impl); `Session` and the commands hold a
 /// `Box<dyn GitBackend>`. A caller with a concrete backend (`MemoryBackend`, `CliBackend`)
 /// imports the traits of the methods it calls.
@@ -1003,6 +1037,7 @@ pub trait GitBackend:
     + GitStash
     + GitOperations
     + GitMaintenance
+    + GitConfig
     + GitSubmodules
     + GitWorktrees
     + Send
@@ -1017,6 +1052,7 @@ impl<T> GitBackend for T where
         + GitStash
         + GitOperations
         + GitMaintenance
+        + GitConfig
         + GitSubmodules
         + GitWorktrees
         + Send
@@ -1080,6 +1116,25 @@ pub trait RepoOpener: Send + Sync {
     /// `repo.init`: a new empty repository in `request.path`, with the same destination rules
     /// as [`RepoOpener::clone_repo`]. The caller then opens it with [`RepoOpener::open`].
     fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError>;
+
+    /// `config.identity` without an open repo (`impl-docs/git/config.md`): `user.name` and
+    /// `user.email` as git reads them outside any repository (global and system files; the
+    /// call is detached from the repo the process happens to be started in: neither its
+    /// configuration nor an `includeIf "gitdir:"` that matches it counts), so
+    /// [`Identity::local`] is empty. A read.
+    fn identity(&self) -> Result<Identity, EngineError>;
+
+    /// [`GitConfig::identity_file`] of the global scope without an open repo: the user's
+    /// global file as git reads it outside any repository.
+    fn global_identity_file(&self) -> Result<IdentityFile, EngineError>;
+
+    /// Writes one key of the identity in the user's global configuration (`git config
+    /// --global`; never the system file, never a file given by path): `Some(value)` sets it
+    /// (replacing every value the file has for the key), `None` removes it (not there: not an
+    /// error). The value is already checked ([`SetIdentityParams::check`]). Works with or
+    /// without an open repo, like [`RepoOpener::clone_repo`].
+    fn set_global_identity(&self, key: IdentityKey, value: Option<&str>)
+    -> Result<(), EngineError>;
 }
 
 /// A page of the log: parameters of `repo.log` (§4), `{"skip"?, "limit"?, "rev"?, "all"?,

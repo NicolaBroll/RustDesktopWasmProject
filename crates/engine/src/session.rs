@@ -1,6 +1,6 @@
 use crate::{
-    CloneOutcome, CloneRequest, EngineError, GitBackend, InitRequest, JobContext, Journal,
-    RepoOpener,
+    CloneOutcome, CloneRequest, EngineError, GitBackend, Identity, IdentityFile, IdentityKey,
+    IdentityScope, InitRequest, JobContext, Journal, RepoOpener, identity_local_without_repo,
 };
 use std::fmt;
 use std::sync::Arc;
@@ -83,7 +83,7 @@ impl Session {
 
     /// [`EngineError::NotAllowed`] on a [`Session::reader`], for what only the session that
     /// writes can do.
-    fn check_writer(&self) -> Result<(), EngineError> {
+    pub(crate) fn check_writer(&self) -> Result<(), EngineError> {
         if self.reader {
             return Err(EngineError::NotAllowed(msg!("engine-reader-session")));
         }
@@ -121,6 +121,45 @@ impl Session {
         self.check_writer()?;
         self.opener.init_repo(request)?;
         self.open(&request.path)
+    }
+
+    /// `config.identity`: the git identity as the open repo reads it or, with no repo open, as
+    /// git reads it outside any repository (the opener: global and system configuration,
+    /// [`Identity::local`] empty). A read: it works on a [`Session::reader`] too.
+    pub fn identity(&self) -> Result<Identity, EngineError> {
+        match &self.repo {
+            Some(repo) => repo.backend.identity(),
+            None => self.opener.identity(),
+        }
+    }
+
+    /// The file `config.set_identity` would write for `scope` ([`IdentityFile`]), seen from the
+    /// open repo or, for the global scope with no repo open, outside any repository (the
+    /// opener). [`IdentityScope::Local`] without an open repo: [`identity_local_without_repo`].
+    pub fn identity_file(&self, scope: IdentityScope) -> Result<IdentityFile, EngineError> {
+        match (scope, &self.repo) {
+            (_, Some(repo)) => repo.backend.identity_file(scope),
+            (IdentityScope::Global, None) => self.opener.global_identity_file(),
+            (IdentityScope::Local, None) => Err(identity_local_without_repo()),
+        }
+    }
+
+    /// `config.set_identity`, one key: writes it (`Some`) or removes it (`None`) in the open
+    /// repo's configuration ([`IdentityScope::Local`]; without an open repo
+    /// [`identity_local_without_repo`]) or, through the opener, in the user's global one
+    /// ([`IdentityScope::Global`], with or without an open repo).
+    pub fn set_identity(
+        &mut self,
+        scope: IdentityScope,
+        key: IdentityKey,
+        value: Option<&str>,
+    ) -> Result<(), EngineError> {
+        self.check_writer()?;
+        match (scope, self.repo.as_mut()) {
+            (IdentityScope::Global, _) => self.opener.set_global_identity(key, value),
+            (IdentityScope::Local, Some(repo)) => repo.backend.set_local_identity(key, value),
+            (IdentityScope::Local, None) => Err(identity_local_without_repo()),
+        }
     }
 
     /// The path of the open repo, `None` if there is none.

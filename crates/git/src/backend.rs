@@ -5,6 +5,7 @@ mod branch;
 mod clean;
 mod clone;
 mod commit;
+mod config;
 mod conflict;
 mod discard;
 mod discard_lines;
@@ -44,13 +45,14 @@ use project_engine::{
     ConflictVersions, CredentialPrompter, DiffSpec, DiscardOutcome, DiscardedFile, EngineError,
     FetchOutcome, FetchRequest, FileBlame, FileLogQuery, GitBackend, GitIndex, GitMaintenance,
     GitOperations, GitRead, GitRefs, GitRemotes, GitStash, GitSubmodules, GitWorktrees, HeadState,
-    InitRequest, JobContext, LinePatch, LineSelection, LogQuery, MergeAborted, MergeOutcome,
-    MergeRequest, Message, OperationState, PickKind, PickRequest, PullOutcome, PullRequest,
-    PullSettings, PushOutcome, PushRequest, RebaseRequest, RefRestore, RemoteBranchDelete,
-    RemoteBranchDeleted, RemoteSnapshot, RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery,
-    StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
-    TagPush, TagPushed, UpstreamConfig, WorktreeRestore, apply_patch, backup_message, line_patch,
-    path_matches, versions_at_risk_hidden,
+    Identity, IdentityFile, IdentityKey, IdentityScope, InitRequest, JobContext, LinePatch,
+    LineSelection, LogQuery, MergeAborted, MergeOutcome, MergeRequest, Message, OperationState,
+    PickKind, PickRequest, PullOutcome, PullRequest, PullSettings, PushOutcome, PushRequest,
+    RebaseRequest, RefRestore, RemoteBranchDelete, RemoteBranchDeleted, RemoteSnapshot,
+    RemoteTagDelete, RepoOpener, RestoreOutcome, SearchQuery, StagedVersion, StashApplied,
+    StashApply, StashDrop, StashDropped, StashEntry, StashPush, TagPush, TagPushed, UpstreamConfig,
+    WorktreeRestore, apply_patch, backup_message, line_patch, path_matches,
+    versions_at_risk_hidden,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -89,6 +91,14 @@ impl CliOpener {
     /// Used by tests for a deterministic environment (e.g. `GIT_CONFIG_GLOBAL=/dev/null`).
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.git.set_env(key.into(), value.into());
+        self
+    }
+
+    /// git does not inherit the environment variable `key` of this process (a value given with
+    /// [`CliOpener::env`] still applies). Used by tests that need a variable to be absent (e.g.
+    /// `GIT_AUTHOR_NAME`, `EMAIL`) whatever the environment they run in.
+    pub fn env_remove(mut self, key: impl Into<OsString>) -> Self {
+        self.git.unset_env(key.into());
         self
     }
 
@@ -316,6 +326,23 @@ impl RepoOpener for CliOpener {
 
     fn init_repo(&self, request: &InitRequest) -> Result<(), EngineError> {
         self.init_into(request)
+    }
+
+    fn identity(&self) -> Result<Identity, EngineError> {
+        config::read_identity(&self.git, config::Place::Outside)
+    }
+
+    fn global_identity_file(&self) -> Result<IdentityFile, EngineError> {
+        config::read_identity_file(&self.git, config::Place::Outside, IdentityScope::Global)
+    }
+
+    fn set_global_identity(
+        &self,
+        key: IdentityKey,
+        value: Option<&str>,
+    ) -> Result<(), EngineError> {
+        let place = config::Place::Outside;
+        config::write_identity(&self.git, place, IdentityScope::Global, key, value)
     }
 }
 

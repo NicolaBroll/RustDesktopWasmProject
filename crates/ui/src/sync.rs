@@ -622,6 +622,7 @@ impl SyncBox {
                     git: None,
                     stash: false,
                     retry: None,
+                    identity: false,
                 }));
                 Received::Failed {
                     message: tr!("sync-not-possible", label = &label, error = error),
@@ -635,6 +636,8 @@ impl SyncBox {
                     git: detail,
                     stash: false,
                     retry: None,
+                    // A pull that merges or rebases creates commits.
+                    identity: crate::identity::missing(&error),
                 }));
                 Received::Failed {
                     message: tr!("common-failed", label = &label, error = error),

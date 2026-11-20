@@ -428,6 +428,77 @@ fn run_without_a_repo_fails() {
     assert!(!output.status.success());
 }
 
+/// The identity commands work without `--repo`, on the global file of the user: here a
+/// temporary `HOME` (and no `GIT_CONFIG_GLOBAL`, so the same holds with git 2.30), never the
+/// real one.
+#[test]
+fn run_identity_without_a_repo_and_local_with_one() {
+    let home = tempfile::tempdir().unwrap();
+    let cli = || {
+        let mut cmd = cli();
+        cmd.env_remove("GIT_CONFIG_GLOBAL")
+            .env_remove("EMAIL")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("xdg"));
+        cmd
+    };
+    let set_global =
+        r#"config.set_identity={"scope":"global","name":"Glob Al","email":"glob@example.com"}"#;
+    let output = cli()
+        .args(["run", "--cmd", "config.identity", "--cmd", set_global])
+        .args(["--cmd", "config.identity"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    assert_eq!(lines[0]["global"], json!({"name": null, "email": null}));
+    assert_eq!(lines[0]["local"], json!({"name": null, "email": null}));
+    // The environment of the tests gives git an author and a committer: listed.
+    assert_eq!(
+        lines[0]["env"],
+        json!([
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL"
+        ])
+    );
+    assert_eq!(lines[1]["changed"], true);
+    assert_eq!(lines[1]["previous"], json!({"name": null, "email": null}));
+    assert_eq!(
+        lines[2]["name"],
+        json!({"value": "Glob Al", "scope": "global"})
+    );
+    let written = std::fs::read_to_string(home.path().join(".gitconfig")).unwrap();
+    assert!(written.contains("name = Glob Al"), "{written}");
+
+    // Local needs `--repo`.
+    let set_local = r#"config.set_identity={"scope":"local","name":"Loc"}"#;
+    let output = cli().args(["run", "--cmd", set_local]).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no repository is open"), "{stderr}");
+
+    let repo = temp_repo(1);
+    let output = cli()
+        .args(["--repo", path_str(repo.path()), "run", "--cmd", set_local])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let lines = json_lines(&output.stdout);
+    assert_eq!(lines[0]["name"], json!({"value": "Loc", "scope": "local"}));
+    assert_eq!(
+        lines[0]["email"],
+        json!({"value": "glob@example.com", "scope": "global"})
+    );
+    assert_eq!(lines[0]["previous"], json!({"name": null, "email": null}));
+    assert_eq!(
+        std::fs::read_to_string(home.path().join(".gitconfig")).unwrap(),
+        written,
+        "the global file is untouched by a local write"
+    );
+}
+
 #[test]
 fn commands_lists_the_catalog() {
     let output = cli().arg("commands").output().unwrap();
@@ -453,6 +524,8 @@ fn commands_lists_the_catalog() {
             "commit.create",
             "commit.revert",
             "commit.show",
+            "config.identity",
+            "config.set_identity",
             "conflict.resolve",
             "conflict.show",
             "diff.commit",
@@ -538,6 +611,7 @@ fn commands_lists_the_catalog() {
             "commit.cherry_pick",
             "commit.create",
             "commit.revert",
+            "config.set_identity",
             "conflict.resolve",
             "edit.redo",
             "edit.undo",

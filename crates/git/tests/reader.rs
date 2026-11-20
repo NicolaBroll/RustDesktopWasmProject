@@ -31,6 +31,7 @@ fn reads() -> Vec<(&'static str, Value, bool)> {
             true,
         ),
         ("commit.show", json!({ "id": "HEAD" }), true),
+        ("config.identity", json!({}), true),
         ("conflict.show", json!({ "path": "a.txt" }), false),
         ("diff.commit", json!({ "id": "HEAD" }), true),
         ("diff.index", json!({}), true),

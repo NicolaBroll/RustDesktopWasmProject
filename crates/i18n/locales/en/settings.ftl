@@ -29,3 +29,44 @@ settings-ask-detach-hint = “Check out this commit” first explains that you w
 settings-editor = External editor
 settings-editor-placeholder = The system's default application
 settings-editor-hint = A command line, for example: code -g {"{file}"}. {"{file}"} is the file's path (without it the path goes at the end); quote words with spaces. Run without a shell. Empty: the system's default application.
+
+# The "Git" section: git's own name and email (identity.rs, S65).
+settings-git = Git
+settings-identity = Name and email of your commits
+settings-identity-hint = Git writes them in every commit you create. They are part of git's configuration, not of this app's settings: nothing changes until you press “Save”.
+settings-identity-global = For all repositories
+settings-identity-global-hint = Your global git configuration (git config --global): what every repository without its own values uses.
+settings-identity-local = Only for this repository
+settings-identity-local-hint = The configuration of “{ $repo }” (git config --local): it wins over the values for all repositories.
+settings-identity-name = Name
+settings-identity-email = Email
+settings-identity-name-placeholder = Your name
+settings-identity-email-placeholder = you@example.com
+settings-identity-inherited = { $value } (from all repositories)
+settings-identity-save = Save
+settings-identity-nothing = Nothing to save: change the name or the email first.
+settings-identity-saving = Saving…
+settings-identity-reading = Reading git's configuration…
+settings-identity-read-failed = Git's configuration could not be read: { $error }
+settings-identity-retry = Retry
+settings-identity-save-failed = Name and email not saved: { $error }
+settings-identity-saved-global = Name and email saved for all repositories. Before: name { $name }, email { $email }.
+settings-identity-saved-local = Name and email saved for this repository. Before: name { $name }, email { $email }.
+settings-identity-unchanged = Git's configuration already had these values: nothing was written.
+settings-identity-quoted = “{ $value }”
+settings-identity-unset = not set
+settings-identity-used = What git uses
+settings-identity-used-repo = What git uses in “{ $repo }”
+settings-identity-not-set = not set
+settings-identity-empty = set, but empty
+settings-identity-from-local = (set for this repository)
+settings-identity-from-global = (set for all repositories)
+settings-identity-from-system = (from the system configuration)
+settings-identity-from-other = (from another configuration: the worktree's or the command line)
+settings-identity-hidden-name = This repository has its own name: the one for all repositories (“{ $global }”) is not used here.
+settings-identity-hidden-email = This repository has its own email: the one for all repositories (“{ $global }”) is not used here.
+settings-identity-env = { $n ->
+    [one] The environment variable { $names } is set where the app was started: git uses it instead of what is saved here.
+   *[other] The environment variables { $names } are set where the app was started: git uses them instead of what is saved here.
+}
+settings-identity-env-email = No email is configured: git takes it from the EMAIL environment variable.

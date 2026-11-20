@@ -1611,6 +1611,7 @@ mod tests {
                 git: None,
                 stash: true,
                 retry: Some(Box::new(retry)),
+                identity: false,
             })
         );
         b.dismiss_refusal();

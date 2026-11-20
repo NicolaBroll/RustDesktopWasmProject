@@ -79,7 +79,7 @@ pub(crate) use remotes_view::remote_dialog;
 use remotes_view::*;
 pub(crate) use reset_view::reset_dialog;
 use reset_view::reset_item;
-pub(crate) use settings_view::settings_window;
+pub(crate) use settings_view::{SettingsPages, settings_window};
 pub(crate) use stage_view::stage_panel;
 use stash_view::*;
 pub(crate) use stash_view::{stash_conflicts_notice, stash_dialog, stash_panel};
@@ -177,6 +177,29 @@ pub(crate) fn default_enter(ui: &Ui) -> bool {
         )
     };
     free && ui.input(|i| i.events.iter().any(pressed))
+}
+
+/// "Set name and email…" beside an error that says git has no identity for the commit (S65):
+/// it opens the settings on the "Git" section, over whatever is open, which stays as it is.
+/// `primary`: it is the default button of a dialog.
+pub(crate) fn set_identity_button(
+    ui: &mut Ui,
+    primary: bool,
+    actions: &mut Vec<Action>,
+) -> egui::Response {
+    let label = tr!("common-identity-button");
+    let button = if primary {
+        primary_button(ui, label, true)
+    } else {
+        egui::Button::new(label)
+    };
+    let response = ui
+        .add(button)
+        .on_hover_text(tr!("common-identity-button-help"));
+    if response.clicked() {
+        actions.push(Action::Settings(crate::settings::Action::SetIdentity));
+    }
+    response
 }
 
 /// When an entry that writes is disabled because it is waiting: the reason.

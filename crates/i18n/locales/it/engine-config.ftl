@@ -1,0 +1,14 @@
+engine-config-nothing-given = indica `name`, `email` o entrambi (una stringa vuota rimuove la chiave)
+engine-config-value-line = `{ $key }` non può contenere un a capo o un carattere NUL
+engine-config-value-angle = `{ $key }` non può contenere `<` o `>`
+engine-config-value-crud = `{ $key }` è fatto solo di spazi e punteggiatura che git toglie: indica un valore vero, o una stringa vuota per rimuovere la chiave
+engine-config-local-no-repo = nessun repository è aperto: aprine uno per impostare l'identità solo per quello, oppure usa "scope": "global" per tutti i tuoi repository; niente è stato scritto
+engine-config-global-confined = la configurazione globale di git non può essere scritta da qui: è fuori dalla cartella consentita e la leggono tutti i repository dell'utente. Usa "scope": "local" per il repository aperto; niente è stato scritto
+engine-config-decided-elsewhere = niente è stato scritto: `{ $key }` della configurazione { $scope } è impostato a «{ $value }» da `{ $file }`, non dal file che questo comando scrive, quindi scrivere lì non cambierebbe ciò che git legge. Modifica `{ $file }` a mano; se è incluso solo per alcuni repository (`includeIf`), il file principale si può impostare senza alcun repository aperto
+engine-config-value = «{ $value }»
+engine-config-unset = non impostato
+engine-config-was = `{ $key }` era { $previous }
+engine-config-partial = { $error }. Già scritto prima di questo errore: { $written }
+engine-config-reread-failed = la configurazione è stata scritta, ma non è stato possibile rileggerla: { $error }. Prima della scrittura: { $written }
+engine-config-still-set = `{ $key }` è stato scritto nella configurazione { $scope }, ma git lì legge «{ $value }» (un'altra voce o un altro file lo imposta): controlla a mano il file di configurazione. Prima della scrittura: { $written }
+engine-config-not-read = `{ $key }` è stato scritto nella configurazione { $scope }, ma git lì non legge alcun valore: controlla a mano il file di configurazione. Prima della scrittura: { $written }

@@ -32,6 +32,7 @@ merge-refused-title = { $title } not possible
 merge-failed-title = { $title } failed
 merge-refused = { $what } not possible: { $error }
 merge-failed = { $what } failed: { $error }. The repository is reloaded to show its current state
+merge-failed-identity = { $what } failed: git has no name or email for you, so it could not create the commit. Set them, then try again
 merge-done = { $title } done
 merge-concluded = { $title } finished
 merge-concluded-but = { $title } finished, but: { $error }

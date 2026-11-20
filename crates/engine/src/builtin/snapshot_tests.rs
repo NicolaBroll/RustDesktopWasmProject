@@ -869,6 +869,35 @@ fn clone_and_init() {
 }
 
 #[test]
+fn identity() {
+    // Without an open repo: the global configuration only.
+    let mut opener = MemoryOpener::default();
+    opener.insert("r", MemoryBackend::sample());
+    let opener = Arc::new(opener);
+    opener.set_identity_env("GIT_AUTHOR_NAME", "Env");
+    let mut s = Session::new(opener);
+    let r = Registry::builtin();
+    snap(&r, &mut s, "config.identity", "no-repo", json!({}));
+    snap(
+        &r,
+        &mut s,
+        "config.set_identity",
+        "global",
+        json!({ "scope": "global", "name": "Glob", "email": "glob@example.com" }),
+    );
+    // The sample has a local identity, which wins.
+    r.run("repo.open", &mut s, json!({ "path": "r" })).unwrap();
+    snap(&r, &mut s, "config.identity", "", json!({}));
+    snap(
+        &r,
+        &mut s,
+        "config.set_identity",
+        "local-unset",
+        json!({ "scope": "local", "name": "", "email": "ada@example.com" }),
+    );
+}
+
+#[test]
 fn clean_untracked() {
     let (r, mut s) = sample();
     snap(

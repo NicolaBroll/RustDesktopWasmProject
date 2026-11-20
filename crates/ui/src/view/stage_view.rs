@@ -363,10 +363,17 @@ fn commit_error(ui: &mut Ui, error: &commit::CommitError, actions: &mut Vec<Acti
         {
             actions.push(Action::Commit(commit::Action::DismissError));
         }
-        ui.add(
-            egui::Label::new(RichText::new(&error.message).color(ui.visuals().error_fg_color))
-                .wrap(),
-        );
+        let color = ui.visuals().error_fg_color;
+        let message = egui::Label::new(RichText::new(&error.message).color(color)).wrap();
+        if error.identity {
+            // The way out first: in a low panel the rows under it are the ones cut.
+            ui.vertical(|ui| {
+                set_identity_button(ui, false, actions);
+                ui.add(message);
+            });
+        } else {
+            ui.add(message);
+        }
     });
     if let Some(output) = &error.output {
         egui::ScrollArea::vertical()

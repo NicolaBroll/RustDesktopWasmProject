@@ -7,8 +7,9 @@
 use crate::clone::{self, CloneBox, Received};
 use crate::credentials::CredentialBox;
 use crate::executor::{Executor, Wake};
+use crate::identity::{self, IdentityBox};
 use crate::keys::{self, Command};
-use crate::settings::{self, Change, Scale, Settings, SettingsBox};
+use crate::settings::{self, Change, Scale, Section, Settings, SettingsBox};
 use crate::{Tab, view};
 use project_domain::RepoPath;
 use project_engine::{NoDialog, Platform, Registry, RepoOpener, Session};
@@ -128,6 +129,8 @@ pub struct App {
     settings_saved: Option<Settings>,
     /// The "Settings…" window.
     settings_box: SettingsBox,
+    /// Its "Git" section: git's name and email, read and saved on the tab shown.
+    identity: IdentityBox,
     /// The questions of git and ssh for the user (S52), one modal at a time.
     credentials: CredentialBox,
     /// The window of the Help menu that is open.
@@ -260,6 +263,7 @@ impl App {
             settings: Settings::default(),
             settings_saved: Some(Settings::default()),
             settings_box: SettingsBox::default(),
+            identity: IdentityBox::default(),
             credentials: CredentialBox::default(),
             help: None,
         };
@@ -358,8 +362,24 @@ impl App {
         }
         self.receive_clone();
         let mut new_worktrees = Vec::new();
+        let mut identity_saved = false;
         for tab in &mut self.tabs {
             tab.receive();
+            // The answers of the "Git" section of the settings, in the status bar of their tab.
+            for done in std::mem::take(&mut tab.identity_done) {
+                match self.identity.receive(tab.id, done) {
+                    identity::Received::Saved(notice) => {
+                        tab.error.clear();
+                        tab.notice.set(notice);
+                        identity_saved = true;
+                    }
+                    identity::Received::Failed(message) => {
+                        tab.notice.clear();
+                        tab.error = message;
+                    }
+                    identity::Received::Read | identity::Received::Nothing => {}
+                }
+            }
             tab.request_operation();
             // No repository there any more: it leaves the recent list.
             if let Some(path) = tab.not_found.take() {
@@ -370,6 +390,10 @@ impl App {
         // A worktree just created (S64) opens in a new tab.
         for path in new_worktrees {
             self.open(path);
+        }
+        // The name and email for all repositories are those of every tab.
+        if identity_saved {
+            self.tabs.iter_mut().for_each(Tab::identity_saved);
         }
         let mut index = 0;
         while index < self.tabs.len() {
@@ -608,9 +632,29 @@ impl App {
 
     fn apply_settings(&mut self, ctx: &egui::Context, action: settings::Action) {
         match action {
-            settings::Action::Open => self.settings_box.open = true,
-            settings::Action::Close => self.settings_box.open = false,
-            settings::Action::Section(section) => self.settings_box.section = section,
+            settings::Action::Open => {
+                self.settings_box.open = true;
+                if self.settings_box.section == Section::Git {
+                    self.identity.show();
+                }
+            }
+            settings::Action::Close => {
+                self.settings_box.open = false;
+                self.identity.close();
+            }
+            settings::Action::Section(section) => {
+                if section == Section::Git && self.settings_box.section != section {
+                    self.identity.show();
+                }
+                self.settings_box.section = section;
+            }
+            settings::Action::SetIdentity => {
+                self.settings_box.open = true;
+                self.settings_box.section = Section::Git;
+                self.identity.show_focused();
+            }
+            settings::Action::Identity(identity::Action::Save) => self.save_identity(),
+            settings::Action::Identity(action) => self.identity.apply(action),
             settings::Action::Change(change) => {
                 let mut settings = self.settings.clone();
                 settings.change(change);
@@ -619,6 +663,37 @@ impl App {
                     self.settings = settings;
                 }
             }
+        }
+    }
+
+    /// "Save" of the "Git" section: `config.set_identity` on the tab shown, unless it is
+    /// already writing (the button is disabled then).
+    fn save_identity(&mut self) {
+        let tab = &mut self.tabs[self.active];
+        if tab.executor.writing().is_some() {
+            return;
+        }
+        if let Some(params) = self.identity.save() {
+            let ticket = tab.save_identity(params);
+            self.identity.sending(tab.id, ticket);
+        }
+    }
+
+    /// While the "Git" section is shown: reads git's name and email on the tab shown when the
+    /// section was just opened, or when it still shows those of another tab or repo. Not a
+    /// read per frame: [`IdentityBox::wants`] is true once.
+    fn follow_identity(&mut self) {
+        if !self.settings_box.open || self.settings_box.section != Section::Git {
+            return;
+        }
+        let tab = &mut self.tabs[self.active];
+        let context = identity::Context {
+            tab: tab.id,
+            repo: tab.repo_path().map(str::to_owned),
+        };
+        if self.identity.wants(&context) {
+            let ticket = tab.read_identity();
+            self.identity.reading(context, ticket);
         }
     }
 
@@ -837,7 +912,12 @@ impl eframe::App for App {
             // Modal as well: what happened under it is dropped.
             actions.clear();
             strip.clear();
-            view::settings_window(&ctx, &self.settings_box, &self.settings, &mut actions);
+            let pages = view::SettingsPages {
+                settings: &self.settings,
+                identity: &self.identity,
+                writing: self.tabs[self.active].executor.writing().is_some(),
+            };
+            view::settings_window(&ctx, &self.settings_box, &pages, &mut actions);
         } else if let Some(dialog) = self.clone.dialog() {
             // The dialog is modal: the clicks under it are blocked, the tab's keys are dropped.
             actions.clear();
@@ -869,6 +949,7 @@ impl eframe::App for App {
         for action in actions.into_iter().chain(strip) {
             self.apply(&ctx, action);
         }
+        self.follow_identity();
         self.tabs[self.active].after_actions(&ctx);
         view::window_edges(&ctx, self.frame);
         self.persist(frame.storage_mut());

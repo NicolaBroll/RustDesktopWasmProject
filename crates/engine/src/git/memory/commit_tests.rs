@@ -291,7 +291,7 @@ fn first_commit() {
 #[test]
 fn missing_identity_is_an_error() {
     let mut repo = empty_repo();
-    repo.identity = None;
+    repo.clear_identity();
     repo.stage(&[p("a.txt")]).unwrap();
     let snapshot = repo.clone();
     let err = repo.commit(&CommitRequest::new("first")).unwrap_err();

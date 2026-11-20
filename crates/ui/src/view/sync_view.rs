@@ -3,7 +3,8 @@ use crate::failure::Source;
 use crate::{fetch, stash, sync};
 
 /// The dialog of a failed or refused operation: what happened, what to do, git's text (with
-/// "Copy message") and "Stash…" for a refusal because of local changes. Modal like the
+/// "Copy message"), "Stash…" for a refusal because of local changes and "Set name and email…"
+/// for a commit git could not create without an identity. Modal like the
 /// confirmations: Esc closes it, the keyboard starts on "Stash…" or "Close" (Enter presses
 /// it). `source`: the area the failure comes from, which closes it; "Stash…" hands that area's
 /// refused command to the stash dialog ("Stash and …", U68).
@@ -23,14 +24,29 @@ pub(crate) fn failure_dialog(
         git_text(ui, git);
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            // Enter presses the focused button: the stash when offered, otherwise "Close".
+            // Enter presses the focused button: the stash or the identity when offered,
+            // otherwise "Close".
             let stash = failure.stash.then(|| {
                 ui.button(tr!("stage-stash-button"))
                     .on_hover_text(tr!("common-stash-button-help"))
             });
+            // The settings open over what is under this dialog, which closes: afterwards the
+            // user is back where the command was sent from.
+            let mut opened = Vec::new();
+            let identity = failure
+                .identity
+                .then(|| set_identity_button(ui, true, &mut opened));
+            if !opened.is_empty() {
+                actions.push(dismiss.clone());
+                actions.append(&mut opened);
+            }
             let close = ui.button(tr!("sync-close"));
             if ui.memory(|m| m.focused().is_none()) {
-                stash.as_ref().unwrap_or(&close).request_focus();
+                stash
+                    .as_ref()
+                    .or(identity.as_ref())
+                    .unwrap_or(&close)
+                    .request_focus();
             }
             if stash.is_some_and(|s| s.clicked()) {
                 actions.push(Action::Stash(stash::Action::OpenAfter(source)));

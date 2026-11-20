@@ -304,6 +304,9 @@ pub struct CommitError {
     pub message: String,
     /// The full git output (hook, signature, identity), to show in a scrollable area.
     pub output: Option<String>,
+    /// Git has no name or email to create the commit with: the error offers "Set name and
+    /// email…", which opens the "Git" section of the settings (S65).
+    pub identity: bool,
 }
 
 /// The message box: the draft, the commit in progress, the confirmation and the last error.
@@ -331,6 +334,14 @@ impl CommitBox {
 
     pub fn dismiss_error(&mut self) {
         self.error = None;
+    }
+
+    /// The identity was saved in the settings: the error that asked for it goes away. The
+    /// draft is not touched.
+    pub fn dismiss_identity_error(&mut self) {
+        if self.error.as_ref().is_some_and(|e| e.identity) {
+            self.error = None;
+        }
     }
 
     /// Prepares the commit of the draft: returns the command to send and the parameters.
@@ -374,6 +385,7 @@ impl CommitBox {
         self.error = Some(CommitError {
             message: format!("{message}."),
             output: None,
+            identity: false,
         });
     }
 
@@ -395,18 +407,26 @@ impl CommitBox {
 
 /// The error text for the user; the written message is never lost.
 fn error(kind: Option<ErrorKind>, message: &str, detail: Option<String>) -> CommitError {
+    // The engine's text contains git's: it says when the name or the email is missing.
+    let identity = crate::identity::missing(message);
     match kind {
         Some(ErrorKind::Git) => CommitError {
-            message: tr!("commit-git-failed"),
+            message: if identity {
+                tr!("commit-identity-missing")
+            } else {
+                tr!("commit-git-failed")
+            },
             output: Some(
                 detail
                     .filter(|out| !out.trim().is_empty())
                     .unwrap_or_else(|| tr!("commit-no-output")),
             ),
+            identity,
         },
         _ => CommitError {
             message: tr!("commit-failed-kept", error = message),
             output: None,
+            identity,
         },
     }
 }

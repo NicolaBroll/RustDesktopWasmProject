@@ -4,6 +4,7 @@ mod branch;
 mod clean;
 mod clone;
 mod commit;
+mod config;
 mod conflict;
 mod discard;
 mod discard_lines;
@@ -45,7 +46,10 @@ use super::{
     StagedVersion, StashApplied, StashApply, StashDrop, StashDropped, StashEntry, StashPush,
     TagPush, TagPushed, UpstreamConfig, WorktreeRestore,
 };
-use super::{CloneOutcome, CloneRequest, InitRequest, SearchQuery};
+use super::{
+    CloneOutcome, CloneRequest, Identity, IdentityFile, IdentityKey, IdentityPair, InitRequest,
+    SearchQuery,
+};
 use crate::{CommitGraphState, EngineError, JobContext, Message, Progress};
 use project_domain::{
     Change, ChangedFile, Commit, CommitDetails, Diff, EntryKind, FileDiff, FileLogEntry, Head, Oid,
@@ -114,8 +118,10 @@ pub struct MemoryBackend {
     /// If set, the backup of `worktree.discard_lines` fails with this message
     /// ([`MemoryBackend::fail_line_backups`]).
     line_backup_failure: Option<String>,
-    /// Name and email of the committer (`user.name`/`user.email`); `None` = not configured.
-    identity: Option<(String, String)>,
+    /// `user.name`/`user.email` of the repo's own configuration ([`MemoryBackend::set_identity`]).
+    local_identity: IdentityPair,
+    /// The user's global identity and environment, shared with the opener that opened the repo.
+    user: config::UserConfig,
     /// Configured remotes, by name.
     remotes: BTreeMap<String, MemoryRemote>,
     /// The pull configuration (`pull.rebase`, `pull.ff`), the same for all branches.
@@ -201,7 +207,8 @@ impl MemoryBackend {
             clean_backups: Vec::new(),
             line_backups: Vec::new(),
             line_backup_failure: None,
-            identity: None,
+            local_identity: IdentityPair::default(),
+            user: config::UserConfig::default(),
             remotes: BTreeMap::new(),
             pull_settings: PullSettings::default(),
             pre_push_failure: None,
@@ -285,12 +292,6 @@ impl MemoryBackend {
     /// reachable).
     pub fn commit_backups(&self) -> &[(String, Oid)] {
         &self.commit_backups
-    }
-
-    /// Identity of the committer, like `user.name` and `user.email`. Without it (the default of
-    /// [`MemoryBackend::new`]) a commit fails, like git without an identity.
-    pub fn set_identity(&mut self, name: &str, email: &str) {
-        self.identity = Some((name.to_owned(), email.to_owned()));
     }
 
     /// The content of blob `id`, if known.
@@ -1326,6 +1327,8 @@ impl GitMaintenance for MemoryBackend {
 #[derive(Debug, Default)]
 pub struct MemoryOpener {
     state: Mutex<OpenerState>,
+    /// The user's global identity and environment: every repo opened here shares it.
+    user: config::UserConfig,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1342,6 +1345,7 @@ impl Clone for MemoryOpener {
     fn clone(&self) -> Self {
         Self {
             state: Mutex::new(self.lock().clone()),
+            user: self.user.detached(),
         }
     }
 }
@@ -1379,7 +1383,8 @@ impl MemoryOpener {
 
     /// A copy of the repo registered at `path`, if any.
     pub fn repo(&self, path: &str) -> Option<MemoryBackend> {
-        self.lock().repos.get(path).cloned()
+        let repo = self.lock().repos.get(path).cloned()?;
+        Some(repo.with_user(&self.user))
     }
 
     /// `path` is a non-empty folder (or a file) that is not a repo: clone and init refuse it.
@@ -1405,7 +1410,7 @@ impl RepoOpener for MemoryOpener {
     fn open(&self, path: &str) -> Result<Box<dyn GitBackend>, EngineError> {
         let state = self.lock();
         match state.repos.get(path) {
-            Some(repo) => Ok(Box::new(repo.clone())),
+            Some(repo) => Ok(Box::new(repo.clone().with_user(&self.user))),
             None => {
                 let known: Vec<&str> = state.repos.keys().map(String::as_str).collect();
                 Err(EngineError::RepoNotFound {
@@ -1471,5 +1476,21 @@ impl RepoOpener for MemoryOpener {
             MemoryBackend::initialized(request.branch.as_deref()),
         );
         Ok(())
+    }
+
+    fn identity(&self) -> Result<Identity, EngineError> {
+        Ok(self.user_identity())
+    }
+
+    fn global_identity_file(&self) -> Result<IdentityFile, EngineError> {
+        Ok(self.user_identity_file())
+    }
+
+    fn set_global_identity(
+        &self,
+        key: IdentityKey,
+        value: Option<&str>,
+    ) -> Result<(), EngineError> {
+        self.set_user_identity(key, value)
     }
 }

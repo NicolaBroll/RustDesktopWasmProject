@@ -19,6 +19,7 @@ commit-created-backup = Commit { $id } creato; backup del commit precedente salv
 commit-amended = Commit { $id } creato al posto di { $previous }; backup del commit precedente salvato
 commit-also-on = ; il commit precedente resta su { $refs }
 commit-git-failed = git commit non riuscito: un hook (pre-commit, commit-msg…), la firma o l'identità (user.name, user.email) hanno fermato il commit. Il messaggio scritto è conservato. Output di git:
+commit-identity-missing = Git non ha un nome o un'email per te, quindi non ha creato il commit. Il messaggio scritto è conservato.
 commit-no-output = (nessun output)
 commit-failed-kept = Commit non riuscito: { $error } Il messaggio scritto è conservato.
 commit-failed = Commit non riuscito: { $error }

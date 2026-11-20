@@ -19,3 +19,8 @@ common-files-and-more = { $files } e altri { $n }
 common-stash-button-help = Apre la finestra «Stash» per mettere da parte le modifiche
 common-copy-message = Copia il messaggio
 common-copy-message-help = Copia negli appunti il titolo, la spiegazione e il testo di git
+# Un commit (o un tag, uno stash) che git non ha potuto creare senza nome ed email (S65).
+common-identity-button = Imposta nome ed email…
+common-identity-button-help = Apre le Impostazioni su «Git»: a git servono un nome e un'email per creare un commit. Quello che stavi facendo resta com'è.
+common-identity-title = A git servono il tuo nome e la tua email
+common-identity-explanation = Git non ha un nome o un'email per te, quindi non ha potuto creare il commit. Impostali, poi riprova: nulla di ciò che hai scritto è perso.

@@ -188,8 +188,12 @@ fn missing_identity_is_git_error() {
     let repo = repo_with_staged_file();
     // No identity in the environment and nothing to guess from the system.
     repo.git(&["config", "user.useConfigOnly", "true"]);
+    // `GIT_CONFIG_GLOBAL` exists from git 2.32: older git is kept away from the user's file
+    // with `HOME` and `XDG_CONFIG_HOME`.
     let opener = CliOpener::new()
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("HOME", "/dev/null")
+        .env("XDG_CONFIG_HOME", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1");
     let mut backend = opener.open_cli(repo.path_str()).unwrap();
     let head = repo.git(&["rev-parse", "HEAD"]);
@@ -198,6 +202,7 @@ fn missing_identity_is_git_error() {
         .commit(&CommitRequest::new("who am I?"))
         .unwrap_err();
     assert!(matches!(err, EngineError::Git { .. }), "{err}");
+    assert!(err.is_missing_identity(), "{err}");
     assert!(
         err.to_string().contains("Please tell me who you are"),
         "{err}"

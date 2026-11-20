@@ -8,6 +8,9 @@
 //! Adding a setting: a field of [`Settings`], a variant of [`Change`] (the window, a menu or a
 //! view push it in an [`Action::Change`]) and its row in the section that shows it. Adding
 //! a section: a variant of [`Section`] and its arm in `view/settings_view.rs`.
+//!
+//! The "Git" section is not a setting of the app: it shows git's own `user.name` and
+//! `user.email`, read and saved through the `Registry` ([`crate::identity`], S65).
 
 use project_engine::Platform;
 use project_i18n::Lang;
@@ -24,6 +27,11 @@ pub(crate) enum Action {
     Section(Section),
     /// Changes a setting (from the window, the theme menu or the diff view).
     Change(Change),
+    /// "Set name and email…" of a commit that failed without them: opens the window on the
+    /// "Git" section, the keyboard in its first empty field.
+    SetIdentity,
+    /// The form of the "Git" section.
+    Identity(crate::identity::Action),
 }
 
 /// Opens the window (Ctrl+, or Cmd+, on macOS).
@@ -366,10 +374,12 @@ pub(crate) enum Section {
     #[default]
     General,
     Remotes,
+    /// Git's name and email ([`crate::identity`]).
+    Git,
 }
 
 impl Section {
-    pub(crate) const ALL: [Section; 2] = [Section::General, Section::Remotes];
+    pub(crate) const ALL: [Section; 3] = [Section::General, Section::Remotes, Section::Git];
 }
 
 /// The "Settings…" window: whether it is open and the section shown.

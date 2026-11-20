@@ -33,6 +33,7 @@ mod file_nav;
 mod format;
 mod graph;
 mod icons;
+mod identity;
 mod ignore;
 mod keys;
 mod lfs;
@@ -120,6 +121,9 @@ enum Action {
     RetryDetails,
     /// "Retry" in the notice of the automatic fetch suspended by an authentication error.
     RetryAutoFetch,
+    /// Closes the failure dialog of a command stopped by a missing git identity
+    /// ([`identity::failure`]).
+    DismissIdentity,
     /// Tabs, folder dialog and recent list: applied by [`App`].
     Tabs(tabs::Action),
     /// The "Clone…" and "New repository…" dialog: applied by [`App`].
@@ -271,6 +275,9 @@ enum Request {
     LfsStatus(u64),
     /// `repo.lfs_paths` (the paths sent are in [`lfs::LfsBox`]).
     LfsPaths(u64),
+    /// `config.identity`/`config.set_identity` of the "Git" section of the settings (the state
+    /// is in [`identity::IdentityBox`], held by [`App`]): they work without a repo too.
+    Identity,
 }
 
 /// The repo shown and the data read so far.
@@ -344,6 +351,9 @@ struct RepoView {
     search: search::SearchBox,
     /// The order of the failure dialogs waiting: one is shown at a time.
     failures: failure::Queue,
+    /// A command stopped because git has no name or email (S65): the failure dialog that
+    /// offers to set them, when the command's own error does not.
+    identity: Option<fetch::Failure>,
     /// Grows with every new status: the operation in progress is re-read once per status.
     status_seq: u64,
     /// What Undo and Redo would do.
@@ -401,6 +411,7 @@ impl RepoView {
             file: file::FileBox::default(),
             search: search::SearchBox::default(),
             failures: failure::Queue::default(),
+            identity: None,
             status_seq: 0,
             history: History::default(),
             select_after_load,
@@ -571,6 +582,9 @@ struct Tab {
     not_found: Option<String>,
     /// The answer of `repo.clone`/`repo.init`, collected by [`App`] for its dialog.
     clone_done: Option<Done>,
+    /// The answers of `config.identity`/`config.set_identity`, collected by [`App`] for the
+    /// "Git" section of the settings.
+    identity_done: Vec<Done>,
     /// The worktree `worktree.add` just created: [`App`] opens it in a new tab.
     open_worktree: Option<String>,
     viewport: ListViewport,
@@ -596,6 +610,7 @@ impl Tab {
             opened: None,
             not_found: None,
             clone_done: None,
+            identity_done: Vec::new(),
             open_worktree: None,
             viewport: ListViewport::default(),
             error: String::new(),
@@ -732,6 +747,11 @@ impl Tab {
                 }
             }
             Action::RetryAutoFetch => self.retry_auto_fetch(),
+            Action::DismissIdentity => {
+                if let Some(repo) = &mut self.repo {
+                    repo.identity = None;
+                }
+            }
             Action::Diff(action) => self.apply_diff(action),
             Action::Stage(action) => self.apply_stage(action),
             Action::Discard(action) => self.apply_discard(action),
@@ -1150,6 +1170,22 @@ impl Tab {
         if let Some(generation) = moved {
             self.check_submodules(generation);
         }
+        // Stopped because git has no name or email, with the error in the command's own dialog
+        // or in the status bar: a failure dialog offers to set them (S65). The commit box and
+        // the failure dialogs of merge, cherry-pick, revert and pull offer it themselves.
+        let unsigned = match request {
+            Request::Branch(g, _)
+            | Request::Merge(g, _)
+            | Request::Stash(g, _)
+            | Request::Sync(g)
+            | Request::Rebase(g)
+                if done.result.as_ref().is_err_and(|e| identity::missing(e)) =>
+            {
+                let git = done.error_detail.clone();
+                Some((g, git.filter(|_| done.error_kind == Some(ErrorKind::Git))))
+            }
+            _ => None,
+        };
         // The answer of the command sent again after a stash ("Stash and …", U68).
         let retried = self
             .repo
@@ -1163,6 +1199,9 @@ impl Tab {
         if let Some(sent) = retried {
             self.retry_answered(&sent, ok);
         }
+        if let Some((generation, git)) = unsigned {
+            self.offer_identity(generation, git);
+        }
         // A new status or diff: which of its files are stored in Git LFS (S63).
         self.follow_lfs();
     }
@@ -1170,6 +1209,7 @@ impl Tab {
     fn receive_request(&mut self, request: Request, done: Done) {
         match request {
             Request::Clone => self.clone_done = Some(done),
+            Request::Identity => self.identity_done.push(done),
             // Details have their own state, errors included: the panel shows them.
             Request::Show(generation, id) => {
                 let result = done
@@ -1486,7 +1526,8 @@ impl Tab {
             | Request::Search(..)
             | Request::Compare(..)
             | Request::LfsStatus(..)
-            | Request::LfsPaths(..) => {}
+            | Request::LfsPaths(..)
+            | Request::Identity => {}
         }
         Ok(())
     }

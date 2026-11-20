@@ -442,6 +442,26 @@ repository of `--root` (default: current directory), if there is one. All paths 
 opened only with `open_repo`: the commands with `outside_repo: true` (`repo.open`, `repo.clone`,
 `repo.init`) are refused by `execute_command`.
 
+### Git identity
+
+`config.identity {}` reads `user.name` and `user.email` as git uses them: `{"name": {"value",
+"scope"}, "email": {...}, "local": {"name", "email"}, "global": {"name", "email"}, "env"}`, with
+`scope` one of `local`, `global`, `system`, `other` (or null when the key is not set) and `env`
+the environment variables that override the configuration (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`;
+`EMAIL` when no email is configured). `config.set_identity {"scope": "local" | "global", "name"?,
+"email"?}` (writes) sets them for the open repository or for all the user's repositories (the
+global file, never the system one); an empty string removes a key, a key not given is not
+touched, values that cannot be an identity (line breaks, `<`, `>`, only punctuation) are refused.
+The result is the identity re-read plus `"previous"` (the values the written file itself held
+before; `"previous_all"` lists them all when a written key had several) and `"changed"` (false
+when nothing had to be written). Only that one file is written: a key whose value git reads from
+another file (an `include`, an `includeIf` that applies to the open repository) is refused before
+writing, with the name of that file. Both work without `--repo` (then `local` is empty, only
+`"scope": "global"` can be written, and the repository around the current directory does not
+count). Not in the journal: `edit.undo` does not change the identity; the previous values are in
+the result. Over MCP only `"scope": "local"` is available, and `execute_command` takes `params`
+only as a JSON object. Details: [impl-docs/git/config.md](impl-docs/git/config.md).
+
 ## Quality
 
 `cargo xtask ci` runs formatting, Clippy with warnings as errors, tests, and the layering check. GitHub CI uses the same command.
